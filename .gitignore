@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# 环境变量
+.env
+
+# 密钥
+*.key
+*.token
+
+# 私人配置
+config/private/
+
+# 数据库
+*.db
+
+# 日志
+logs/

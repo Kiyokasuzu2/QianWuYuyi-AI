@@ -1,19 +1,19 @@
 # Python
 __pycache__/
 *.pyc
-
-# 环境变量
+*.pyo
+venv/
 .env
 
-# 密钥
-*.key
-*.token
-
-# 私人配置
-config/private/
-
-# 数据库
+# 数据
+data/
 *.db
+*.sqlite3
 
-# 日志
-logs/
+# IDE
+.vscode/
+.idea/
+
+# Private config
+config/
+config.yaml

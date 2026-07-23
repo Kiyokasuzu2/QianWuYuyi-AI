@@ -1,0 +1,9 @@
+memory:
+  json_path: data/memory.json
+  chroma_path: data/chroma_db
+  embedding_model: all-MiniLM-L6-v2
+  search_top_k: 8
+  min_relevance: 0.3
+  target_user_id: "366648462"
+llm:
+  api_key: ""

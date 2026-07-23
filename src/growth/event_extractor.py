@@ -207,7 +207,7 @@ conversation
                 return None
 
     def _write_failure(self, prompt: str, result: str):
-        fname = self._fail_dir / f"failure_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.jsonl"
+        fname = self._fail_dir / "failures.jsonl"
         record = {
             "timestamp": datetime.utcnow().isoformat(),
             "prompt": prompt[:200],

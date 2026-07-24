@@ -1,13 +1,12 @@
 """
-事件历史匹配器（EventHistoryMatcher） v0.7.6
+事件历史匹配器（EventHistoryMatcher） v0.7.7
 
 职责:
 判断事件是第一次发生还是重复经历。
 支持从外部 GrowthState 读取持久化历史，保证重启后依然能识别重复经历。
 
-v0.7.6 修改:
-- build_key 改用 event_identity_resolver，基于稳定身份生成 key
-- 不再依赖 meaning 字段补全，完全由 identity 驱动
+v0.7.7 修改:
+- get_history 升级为支持按 topic 和 type 过滤，为 GrowthEvaluator 提供历史数据
 """
 
 from typing import List, Dict
@@ -72,8 +71,27 @@ class EventHistoryMatcher:
 
         return result
 
-    def get_history(self):
-        return self.history
+    def get_history(self, canonical_topic: str = None, event_type: str = None) -> list:
+        """
+        返回历史事件列表，可按主题和类型过滤。
+        用于 GrowthEvaluator 计算 stability 和 consistency。
+        """
+        if canonical_topic is None and event_type is None:
+            return self.history
+
+        filtered = []
+        for event in self.history:
+            match_topic = (
+                canonical_topic is None
+                or event.get("canonical_topic", event.get("topic", "")) == canonical_topic
+            )
+            match_type = (
+                event_type is None
+                or event.get("event_type", "") == event_type
+            )
+            if match_topic and match_type:
+                filtered.append(event)
+        return filtered
 
     def reset(self):
         self.history = []

@@ -1,22 +1,24 @@
 """
-羽依成长引擎（GrowthEngine）v1.6.4
+羽依成长引擎（GrowthEngine）v1.7
 
 职责:
-人生事件 → 成长意义识别 → 人格参数变化 → GrowthState保存
+人生事件 → 成长意义识别 → GrowthState 统计更新 + GrowthRecord 生成
 
-v1.6.4 修改:
-- _history_key 改用 event_identity_resolver，基于稳定身份生成 key
-- _record_history 优先使用事件已有的 event_identity，并保留 fallback 解析
-- apply 入口增加兜底：如果上游未注入身份，Engine 自动解析
-- apply 内调整执行顺序：先解析身份，再用身份推导含义
-- 添加 DEBUG BEFORE RECORD 输出，便于验证身份传递
+v1.7 更新:
+- 新增 apply_evaluated 方法，基于 GrowthEvaluator 的评估结果生成 GrowthRecord
+- 原有 apply 方法保留，用于 GrowthState 的历史统计和关系状态更新
+- GrowthRecord 由 PersonalityResolver 在 Phase 3.2 消费，Engine 不直接修改人格维度
 """
 
-from typing import Dict
+from typing import Dict, Optional
 from datetime import datetime
+import uuid
+
 from src.growth.growth_state import GrowthState
 from src.growth.meaning_resolver import resolve_meaning
 from src.growth.event_identity_resolver import resolve_event_identity
+from src.growth.growth_record import GrowthRecord, create_growth_record
+from src.growth.growth_schema import MAX_SINGLE_EVENT_DELTA
 
 
 class GrowthEngine:
@@ -122,6 +124,9 @@ class GrowthEngine:
         })
 
     def apply(self, event: Dict):
+        """
+        原有方法：更新 GrowthState 统计指标（保留用于历史统计和关系状态）
+        """
         if event.get("event_scope") == "system":
             return {"status": "ignored", "reason": "system_event"}
 
@@ -133,7 +138,6 @@ class GrowthEngine:
         meaning = resolve_meaning(event)
         event["meaning"] = meaning
         
-        # 如果还是没有含义，尝试最后的手段
         if not meaning:
             meaning = event.get("meaning") or event.get("event_type", "unknown")
             event["meaning"] = meaning
@@ -159,14 +163,6 @@ class GrowthEngine:
         if not existed and rule.get("milestone", False):
             self.state.add_milestone(event.get("event_id"), event.get("topic", ""))
 
-        # 调试输出（冻结后可移除）
-        print(
-            "DEBUG BEFORE RECORD:",
-            event.get("event_identity"),
-            event.get("_identity_source"),
-            event.get("evidence")
-        )
-
         self._record_history(event, mode, before, delta)
         self.state.save()
 
@@ -177,6 +173,47 @@ class GrowthEngine:
             "topic": event.get("topic"),
             "delta": delta
         }
+
+    def apply_evaluated(self, evaluated_event: Dict) -> Optional[GrowthRecord]:
+        """
+        Phase 3.1 新增：基于 GrowthEvaluator 评估结果生成 GrowthRecord。
+        仅生成记录，不修改人格数值。人格变更由 PersonalityResolver 在 Phase 3.2 统一处理。
+        """
+        if not evaluated_event.get("growth_allowed", False):
+            return None
+
+        growth_signal = evaluated_event.get("growth_signal", "")
+        source_type = evaluated_event.get("event_type", "")
+        growth_level = evaluated_event.get("growth_level", "context")
+        confidence = evaluated_event.get("confidence", 0.5)
+        target_candidates = evaluated_event.get("target_candidates", [])
+        applied_delta = evaluated_event.get("applied_delta", 0.0)
+        event_id = evaluated_event.get("event_id", "")
+        canonical_topic = evaluated_event.get("canonical_topic", "")
+
+        if not target_candidates or applied_delta <= 0.0:
+            return None
+
+        affected_dimensions = {}
+        primary_dimension = target_candidates[0]
+        affected_dimensions[primary_dimension] = applied_delta
+
+        if len(target_candidates) > 1:
+            secondary_dimension = target_candidates[1]
+            affected_dimensions[secondary_dimension] = round(applied_delta * 0.5, 4)
+
+        record = create_growth_record(
+            record_id=str(uuid.uuid4())[:8],
+            source_event_id=event_id,
+            growth_signal=growth_signal,
+            source_type=source_type,
+            growth_level=growth_level,
+            affected_dimensions=affected_dimensions,
+            confidence=confidence,
+            reason=f"[{growth_level}] {growth_signal} - {canonical_topic} (confidence={confidence:.2f})",
+            created_at=datetime.now().isoformat(),
+        )
+        return record
 
     def apply_batch(self, events: list):
         return [self.apply(e) for e in events]

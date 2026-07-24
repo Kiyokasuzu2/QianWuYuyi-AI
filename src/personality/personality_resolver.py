@@ -1,19 +1,22 @@
 """
-人格解析器 PersonalityResolver v1.5.1
+人格解析器 PersonalityResolver v1.6
 
 职责:
-GrowthState + RelationshipState + 固定人格 → 当前羽依人格表现
+GrowthRecord累积 + GrowthState实时指标 + 固定人格 → 当前羽依人格表现
 
-v1.5.1 修复:
-- 修复 dependence 字段引用错误（base["dependence"] 已从 PersonalityProfile 移除，改用默认值 0.5）
+v1.6 更新:
+- 接入 GrowthAccumulator，从 GrowthRecord 累积长期人格基础
+- 保留 GrowthState 实时指标用于短期微调
+- 修复 growth_records 空列表引用陷阱
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from src.growth.growth_state import GrowthState
 from src.personality.personality_profile import PersonalityProfile
 from src.personality.behavior_resolver import BehaviorResolver
 from src.personality.relationship_state import RelationshipState
 from src.personality.personality_vector import PersonalityVector
+from src.personality.growth_accumulator import GrowthAccumulator
 
 
 class PersonalityResolver:
@@ -21,11 +24,18 @@ class PersonalityResolver:
     def __init__(
         self,
         state: Optional[GrowthState] = None,
-        relationship_state: Optional[RelationshipState] = None
+        relationship_state: Optional[RelationshipState] = None,
+        growth_records: Optional[List[Dict]] = None,  # Phase 3.2 新增
     ):
         self.state = state or GrowthState()
         self.relationship_state = relationship_state or RelationshipState()
         self.behavior_resolver = BehaviorResolver(self.relationship_state)
+
+        # Phase 3.2：成长记录累积器
+        self.growth_records = (
+            growth_records if growth_records is not None else []
+        )
+        self.accumulator = GrowthAccumulator()
 
     def resolve(self) -> PersonalityVector:
         """解析当前人格向量"""
@@ -36,7 +46,7 @@ class PersonalityResolver:
         behaviors = data.get("behaviors", {})
         identities = data.get("identities", [])
 
-        # GrowthState 中的数值
+        # GrowthState 中的数值（保留用于短期微调）
         growth_trust = metrics.get("trust", 0)
         growth_closeness = metrics.get("closeness", 0)
         growth_security = metrics.get("security", 0)
@@ -52,11 +62,15 @@ class PersonalityResolver:
         rel_trust = self.relationship_state.get_trust()
         rel_familiarity = self.relationship_state.get_familiarity()
 
-        base = PersonalityProfile.BASE
+        # ---- Phase 3.2：从 GrowthRecord 累积长期人格基础 ----
+        accumulated = self.accumulator.compute(
+            records=self.growth_records,
+            base_personality=PersonalityProfile.BASE.copy(),
+        )
 
-        # ---- 核心人格计算（融入关系影响） ----
+        # ---- 核心人格计算（长期累积 + 短期实时微调） ----
         warmth = self._clamp(
-            base["warmth"]
+            accumulated["warmth"]
             + growth_closeness * 0.25
             + growth_trust * 0.15
             + growth_warmth_memory * 0.15
@@ -64,25 +78,24 @@ class PersonalityResolver:
         )
 
         gentleness = self._clamp(
-            base["gentleness"]
+            accumulated["gentleness"]
             + growth_closeness * 0.2
             + growth_emotional_memory * 0.1
             + rel_bond * 0.15
         )
 
         shyness = self._clamp(
-            base["shyness"]
+            accumulated["shyness"]
             - growth_security * 0.1
             + growth_attachment * 0.05
             - rel_familiarity * 0.1
         )
 
         sensitivity = self._clamp(
-            base["sensitivity"]
+            accumulated["sensitivity"]
             + growth_awareness * 0.2
         )
 
-        # v1.5.1 修复：dependence 默认值 0.5（原 base["dependence"] 已移除）
         dependence = self._clamp(
             0.5
             + growth_attachment * 0.3
@@ -91,7 +104,7 @@ class PersonalityResolver:
         )
 
         emotional_expression = self._clamp(
-            base["emotional_expression"]
+            accumulated["emotional_expression"]
             + growth_closeness * 0.25
             + growth_confidence * 0.15
             + growth_security * 0.1
@@ -99,7 +112,7 @@ class PersonalityResolver:
         )
 
         caring = self._clamp(
-            base["caring"]
+            accumulated["caring"]
             + growth_closeness * 0.25
             + growth_trust * 0.15
             + rel_bond * 0.2

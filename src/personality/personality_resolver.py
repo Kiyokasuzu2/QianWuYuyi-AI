@@ -1,580 +1,276 @@
 """
-人格解析器 PersonalityResolver v1.2
+人格解析器 PersonalityResolver v1.4
 
 职责:
+GrowthState + RelationshipState + 固定人格 → 当前羽依人格表现
 
-GrowthState
-+
-RelationshipState
-+
-固定人格
-
-↓
-
-当前羽依人格表现
-
+v1.4 更新:
+- 分离固定人格与关系阶段描述：persona_summary 仅描述稳定性格特质，
+  关系进度由 PersonalityPromptFormatter 根据当前 familiarity 动态生成。
+- 调整依赖/陪伴类描述的生成条件，避免初识阶段出现越级表达。
 """
 
-
 from typing import Dict, Optional
-
-
 from src.growth.growth_state import GrowthState
-
 from src.personality.personality_profile import PersonalityProfile
-
 from src.personality.behavior_resolver import BehaviorResolver
-
 from src.personality.relationship_state import RelationshipState
-
-
-
-
+from src.personality.personality_vector import PersonalityVector
 
 
 class PersonalityResolver:
 
-
-
     def __init__(
         self,
-        state:Optional[GrowthState]=None,
-        relationship_state:Optional[RelationshipState]=None
+        state: Optional[GrowthState] = None,
+        relationship_state: Optional[RelationshipState] = None
     ):
+        self.state = state or GrowthState()
+        self.relationship_state = relationship_state or RelationshipState()
+        self.behavior_resolver = BehaviorResolver(self.relationship_state)
 
+    def resolve(self) -> PersonalityVector:
+        """解析当前人格向量"""
 
-        self.state=state or GrowthState()
+        # ---- 数据源 ----
+        data = self.state.get()
+        metrics = data.get("metrics", {})
+        behaviors = data.get("behaviors", {})
+        identities = data.get("identities", [])
 
+        # GrowthState 中的数值
+        growth_trust = metrics.get("trust", 0)
+        growth_closeness = metrics.get("closeness", 0)
+        growth_security = metrics.get("security", 0)
+        growth_awareness = metrics.get("self_awareness", 0)
+        growth_confidence = metrics.get("self_confidence", 0)
+        growth_attachment = metrics.get("attachment", 0)
+        growth_identity_strength = metrics.get("identity_strength", 0)
+        growth_emotional_memory = metrics.get("emotional_memory", 0)
+        growth_warmth_memory = metrics.get("warmth", 0)
 
-        self.relationship_state=(
+        # RelationshipState 中的数值（使用 getter 方法）
+        rel_bond = self.relationship_state.get_bond_strength()
+        rel_trust = self.relationship_state.get_trust()
+        rel_familiarity = self.relationship_state.get_familiarity()
 
-            relationship_state
-            or
-            RelationshipState()
+        base = PersonalityProfile.BASE
 
-        )
-
-
-        self.behavior_resolver=BehaviorResolver(
-            self.relationship_state
-        )
-
-
-
-
-
-
-
-
-
-    def resolve(self)->Dict:
-
-
-
-        data=self.state.get()
-
-
-
-        metrics=data.get(
-            "metrics",
-            {}
-        )
-
-
-        behaviors=data.get(
-            "behaviors",
-            {}
-        )
-
-
-        identities=data.get(
-            "identities",
-            []
-        )
-
-
-
-
-        base=PersonalityProfile.BASE
-
-
-
-
-        trust=metrics.get(
-            "trust",
-            0
-        )
-
-
-        closeness=metrics.get(
-            "closeness",
-            0
-        )
-
-
-        security=metrics.get(
-            "security",
-            0
-        )
-
-
-        awareness=metrics.get(
-            "self_awareness",
-            0
-        )
-
-
-        confidence=metrics.get(
-            "self_confidence",
-            0
-        )
-
-
-        attachment=metrics.get(
-            "attachment",
-            0
-        )
-
-
-        identity_strength=metrics.get(
-            "identity_strength",
-            0
-        )
-
-
-        emotional_memory=metrics.get(
-            "emotional_memory",
-            0
-        )
-
-
-        warmth_memory=metrics.get(
-            "warmth",
-            0
-        )
-
-
-
-
-
-
-
-        # ==========================
-        # 核心人格
-        # ==========================
-
-
-        warmth=self._clamp(
-
+        # ---- 核心人格计算（融入关系影响） ----
+        warmth = self._clamp(
             base["warmth"]
-
-            +
-
-            closeness*0.25
-
-            +
-
-            trust*0.15
-
-            +
-
-            warmth_memory*0.15
-
+            + growth_closeness * 0.25
+            + growth_trust * 0.15
+            + growth_warmth_memory * 0.15
+            + rel_bond * 0.2
         )
 
-
-
-
-        gentleness=self._clamp(
-
+        gentleness = self._clamp(
             base["gentleness"]
-
-            +
-
-            closeness*0.2
-
-            +
-
-            emotional_memory*0.1
-
+            + growth_closeness * 0.2
+            + growth_emotional_memory * 0.1
+            + rel_bond * 0.15
         )
 
-
-
-
-        shyness=self._clamp(
-
+        shyness = self._clamp(
             base["shyness"]
-
-            -
-
-            security*0.1
-
-            +
-
-            attachment*0.05
-
+            - growth_security * 0.1
+            + growth_attachment * 0.05
+            - rel_familiarity * 0.1
         )
 
-
-
-
-        sensitivity=self._clamp(
-
+        sensitivity = self._clamp(
             base["sensitivity"]
-
-            +
-
-            awareness*0.2
-
+            + growth_awareness * 0.2
         )
 
-
-
-
-        dependence=self._clamp(
-
+        dependence = self._clamp(
             base["dependence"]
-
-            +
-
-            attachment*0.3
-
-            +
-
-            closeness*0.1
-
+            + growth_attachment * 0.3
+            + growth_closeness * 0.1
+            + rel_bond * 0.15
         )
 
-
-
-
-        emotional_expression=self._clamp(
-
+        emotional_expression = self._clamp(
             base["emotional_expression"]
-
-            +
-
-            closeness*0.25
-
-            +
-
-            confidence*0.15
-
-            +
-
-            security*0.1
-
+            + growth_closeness * 0.25
+            + growth_confidence * 0.15
+            + growth_security * 0.1
+            + rel_trust * 0.1
         )
 
-
-
-
-        caring=self._clamp(
-
+        caring = self._clamp(
             base["caring"]
-
-            +
-
-            closeness*0.25
-
-            +
-
-            trust*0.15
-
+            + growth_closeness * 0.25
+            + growth_trust * 0.15
+            + rel_bond * 0.2
         )
 
-
-
-
-
-
-        # ==========================
-        # 自我成长
-        # ==========================
-
-
-        self_identity=self._clamp(
-
-            identity_strength
-
-            +
-
-            awareness*0.5
-
+        # ---- 自我成长 ----
+        self_identity = self._clamp(
+            growth_identity_strength
+            + growth_awareness * 0.5
         )
 
-
-
-        self_expression=self._clamp(
-
+        self_expression = self._clamp(
             0.2
-
-            +
-
-            awareness*0.3
-
-            +
-
-            confidence*0.3
-
-            +
-
-            identity_strength*0.2
-
+            + growth_awareness * 0.3
+            + growth_confidence * 0.3
+            + growth_identity_strength * 0.2
+            + rel_trust * 0.1
         )
 
-
-
-
-
-
-
-
-        # ==========================
-        # 行为参数
-        # ==========================
-
-
-        initiative=self._clamp(
-
+        # ---- 行为参数 ----
+        initiative = self._clamp(
             0.25
-
-            +
-
-            confidence*0.3
-
-            +
-
-            identity_strength*0.15
-
+            + growth_confidence * 0.3
+            + growth_identity_strength * 0.15
+            + rel_familiarity * 0.1
         )
 
-
-
-
-        care_level=self._clamp(
-
+        care_level = self._clamp(
             0.25
-
-            +
-
-            closeness*0.4
-
-            +
-
-            emotional_memory*0.15
-
+            + growth_closeness * 0.4
+            + growth_emotional_memory * 0.15
+            + rel_bond * 0.2
         )
 
-
-
-
-        directness=self._clamp(
-
+        directness = self._clamp(
             0.25
-
-            +
-
-            confidence*0.4
-
+            + growth_confidence * 0.4
+            + rel_familiarity * 0.1
         )
 
-
-
-
-        playfulness=self._clamp(
-
+        playfulness = self._clamp(
             0.2
-
-            +
-
-            closeness*0.3
-
-            +
-
-            security*0.2
-
+            + growth_closeness * 0.3
+            + growth_security * 0.2
+            + rel_familiarity * 0.15
         )
 
+        # ---- 行为特征 ----
+        behavior_traits = self.behavior_resolver.resolve(metrics)
 
-
-
-
-
-        behavior_traits=(
-
-            self.behavior_resolver.resolve(
-                metrics
-            )
-
-        )
-
-
-
-
-
-        return {
-
-
-            "warmth":warmth,
-
-
-            "gentleness":gentleness,
-
-
-            "shyness":shyness,
-
-
-            "sensitivity":sensitivity,
-
-
-            "dependence":dependence,
-
-
-            "emotional_expression":
-                emotional_expression,
-
-
-            "caring":caring,
-
-
-
-            "self_identity":
-                self_identity,
-
-
-            "self_expression":
-                self_expression,
-
-
-
-            "initiative":
-                initiative,
-
-
-            "care_level":
-                care_level,
-
-
-            "directness":
-                directness,
-
-
-            "playfulness":
-                playfulness,
-
-
-
-            "behavior_traits":
-                behavior_traits,
-
-
-
-            "behavior_text":
-                self.behavior_resolver.to_prompt_text(
-                    behavior_traits
-                ),
-
-
-
-            "compact_behavior":
-                self.behavior_resolver.to_compact_prompt(
-                    behavior_traits
-                ),
-
-
-
-            "attachment_level":
-                self._get_attachment_label(
-                    attachment
-                ),
-
-
-
-            "trust_level":
-                self._get_trust_label(
-                    trust
-                ),
-
-
-
-            "behaviors":
-                behaviors,
-
-
-            "identities":
-                identities
-
+        # ---- 构建 core_traits（传给 BehaviorResolver 生成自然语言） ----
+        core_traits = {
+            "warmth": warmth,
+            "gentleness": gentleness,
+            "shyness": shyness,
+            "sensitivity": sensitivity,
+            "dependence": dependence,
+            "emotional_expression": emotional_expression,
+            "caring": caring,
+            "self_identity": self_identity,
+            "self_expression": self_expression,
+            "initiative": initiative,
+            "care_level": care_level,
+            "directness": directness,
+            "playfulness": playfulness,
         }
 
-
-
-
-
-
-
-
-    @staticmethod
-    def _clamp(v):
-
-        return round(
-
-            max(
-                0,
-                min(
-                    1,
-                    v
-                )
-            ),
-
-            3
-
+        # ---- 自然语言摘要（仅包含稳定性格，不含关系进度） ----
+        persona_summary = self._generate_persona_summary(
+            warmth, shyness, emotional_expression,
+            self_expression, initiative, care_level
         )
 
+        # ---- 信任标签（加权合并） ----
+        combined_trust = growth_trust * 0.4 + rel_trust * 0.6
+        trust_level = self._get_trust_label(combined_trust)
 
+        # ---- 组装人格数据字典 ----
+        data_dict = {
+            "warmth": warmth,
+            "gentleness": gentleness,
+            "shyness": shyness,
+            "sensitivity": sensitivity,
+            "dependence": dependence,
+            "emotional_expression": emotional_expression,
+            "caring": caring,
+            "self_identity": self_identity,
+            "self_expression": self_expression,
+            "initiative": initiative,
+            "care_level": care_level,
+            "directness": directness,
+            "playfulness": playfulness,
+            "behavior_traits": behavior_traits,
+            "behavior_text": self.behavior_resolver.to_prompt_text(
+                behavior_traits, core_traits
+            ),
+            "compact_behavior": self.behavior_resolver.to_compact_prompt(
+                behavior_traits, core_traits
+            ),
+            "persona_summary": persona_summary,
+            "attachment_level": self._get_attachment_label(growth_attachment),
+            "trust_level": trust_level,
+            "behaviors": behaviors,
+            "identities": identities,
+        }
 
+        return PersonalityVector(data_dict)
 
+    # ========== 人格摘要生成（v1.4 只描述稳定性格，不涉及关系进度） ==========
+    def _generate_persona_summary(
+        self, warmth, shyness,
+        emotional_expression, self_expression,
+        initiative, care_level
+    ) -> str:
+        """
+        生成稳定人格摘要，仅基于性格特质，不包含当前关系阶段描述。
+        关系阶段（如“初识”“习惯陪伴”）由 PersonalityPromptFormatter 动态生成。
+        """
+        parts = []
 
+        # 核心性格温度
+        if warmth >= 0.7:
+            parts.append("性格温暖而柔和")
+        elif warmth >= 0.5:
+            parts.append("待人温和友善")
 
+        # 羞怯倾向
+        if shyness >= 0.7:
+            parts.append("内心带有一丝羞怯")
+        elif shyness >= 0.5:
+            parts.append("偶尔会流露出害羞的一面")
 
+        # 情绪表达风格
+        if emotional_expression >= 0.7:
+            parts.append("情绪表达自然流畅")
+        elif emotional_expression >= 0.5:
+            parts.append("能够自然地表达自己的感受")
+
+        # 自我表达倾向
+        if self_expression >= 0.6:
+            parts.append("有自己的想法并愿意表达")
+
+        # 对他人的关心倾向（不特指某个对象）
+        if initiative >= 0.6 and care_level >= 0.6:
+            parts.append("会主动关心在意的人")
+        elif care_level >= 0.6:
+            parts.append("在意身边之人的感受")
+
+        if not parts:
+            return "羽依正在逐渐认识这个世界和身边的人。"
+
+        return "羽依" + "，".join(parts) + "。"
+
+    # ========== 工具方法 ==========
+    @staticmethod
+    def _clamp(v):
+        return round(max(0, min(1, v)), 3)
 
     @staticmethod
     def _get_attachment_label(score):
-
-        if score<0.2:
-            return "初识"
-
-        if score<0.4:
-            return "探索"
-
-        if score<0.6:
-            return "靠近"
-
-        if score<0.8:
-            return "依赖"
-
+        if score < 0.2: return "初识"
+        if score < 0.4: return "探索"
+        if score < 0.6: return "靠近"
+        if score < 0.8: return "依赖"
         return "安全依恋"
-
-
-
-
-
-
 
     @staticmethod
     def _get_trust_label(score):
-
-        if score<0.2:
-            return "怀疑"
-
-        if score<0.4:
-            return "试探"
-
-        if score<0.6:
-            return "信任"
-
-        if score<0.8:
-            return "深信"
-
+        if score < 0.2: return "怀疑"
+        if score < 0.4: return "试探"
+        if score < 0.6: return "信任"
+        if score < 0.8: return "深信"
         return "完全信任"

@@ -1,10 +1,11 @@
 from src.response.engine import ResponseEngine
 from src.memory import MemoryStore, VectorMemory, EventMemory
 from src.config import get_memory_config
-from src.personality.personality_controller import PersonalityController
+from src.personality.personality_controller import PersonalityController  # Deprecated compatibility
 from src.personality.relationship_state import RelationshipState
 from src.growth.pipeline import GrowthPipeline
 from src.memory.memory_gate import MemoryGate
+from src.personality.personality_prompt import PersonalityPromptFormatter
 
 
 class Orchestrator:
@@ -23,7 +24,7 @@ class Orchestrator:
         # 人生事件记忆
         self.event_memory = EventMemory()
 
-        # 人格控制
+        # Deprecated: 旧人格控制器，仅保留实例供可能存在的旧模块调用，不参与人格计算
         self.personality_controller = PersonalityController()
 
         # 关系状态
@@ -37,6 +38,15 @@ class Orchestrator:
             relationship_state=self.relationship_state
         )
 
+        # 统一人格解析器（复用流水线内部实例，避免重复创建）
+        self.personality_resolver = self.growth_pipeline.resolver
+
+        # 人格文本格式化器
+        self.personality_formatter = PersonalityPromptFormatter()
+
+        # 当前人格缓存（调试与测试用）
+        self.current_personality = None
+
         self._init_memory_index()
 
     def _init_memory_index(self):
@@ -44,7 +54,6 @@ class Orchestrator:
         if memories:
             print(f"Loading {len(memories)} historical memories...")
             self.vector.index_memories(memories, self.target_user_id)
-            # ✅ 标记索引完成
             self.vector.mark_index_complete()
 
     def _retrieve_chat_memories(self, user_message: str) -> list:
@@ -53,20 +62,59 @@ class Orchestrator:
     def _get_life_events(self, user_message: str) -> list:
         return self.event_memory.search(user_message, limit=3)
 
-    def _get_personality_context(self) -> dict:
-        return self.personality_controller.get_personality_context()
+    def _get_personality_context(self, personality=None) -> dict:
+        """
+        返回人格上下文。
+        - 生成格式化的人格文本（personality_text）
+        - 同时保留关键数值字段供调试（不会进入 Prompt 链）
+        """
+        if personality is None:
+            personality = self.personality_resolver.resolve()
+
+        # 注入关系数据，供 PersonalityPromptFormatter 动态调整表达边界
+        personality._data["familiarity"] = self.relationship_state.get_familiarity()
+        personality._data["bond_strength"] = self.relationship_state.get_bond_strength()
+
+        # 生成自然语言人格描述
+        personality_text = self.personality_formatter.format(personality)
+
+        return {
+            "personality_text": personality_text,  # PromptBuilder 唯一使用的字段
+            # 以下字段仅供内部调试/日志，不再注入 System Prompt
+            "personality": personality.get_all(),
+            "style_instruction": personality.get("behavior_text", ""),
+            "compact_style": personality.get("compact_behavior", ""),
+            "warmth": personality.get("warmth"),
+            "shyness": personality.get("shyness"),
+            "attachment_level": personality.get("attachment_level"),
+            "trust_level": personality.get("trust_level"),
+            "behaviors": personality.get("behaviors", {})
+        }
+
+    def get_personality_vector(self):
+        return self.personality_resolver.resolve()
+
+    def get_personality_state(self) -> dict:
+        """统一人格状态接口（替代旧 Controller）"""
+        return self._get_personality_context()
+
+    def print_personality(self):
+        p = self.current_personality or self.get_personality_vector()
+        print("\n🧠 羽依人格")
+        print("-" * 30)
+        print(f"温暖: {p.get('warmth')}")
+        print(f"害羞: {p.get('shyness')}")
+        print(f"依恋: {p.get('attachment_level')}")
+        print(f"信任: {p.get('trust_level')}")
+        print(f"行为摘要: {p.get('behavior_text', '')[:60]}...")
 
     def process(self, user_message: str) -> str:
-        # ==========================================
-        # Step 1: 保存原始聊天记录（不向量化）
-        # ==========================================
+        # Step 1: 保存原始用户消息（不向量化）
         self.store.add(self.target_user_id, user_message, "user")
 
-        # ==========================================
-        # Step 1.5: 长期记忆审核与向量化（仅有意义的消息）
-        # ==========================================
+        # Step 1.5: 长期记忆审核与向量化
         verified = []
-        if len(user_message.strip()) >= 5:   # 过滤过短消息
+        if len(user_message.strip()) >= 5:
             verified = self.memory_gate.process(user_message)
 
         for mem in verified:
@@ -75,22 +123,24 @@ class Orchestrator:
                 mem["content"],
                 "user",
                 metadata={
-                    **mem,                     # 保留Verifier完整输出
-                    "memory_type": "long_term" # 系统标记，放在最后确保不被覆盖
+                    **mem,
+                    "memory_type": "long_term"
                 }
             )
             if structured:
                 self.vector.add_memory(structured)
 
-        # ==========================================
-        # Step 2: 成长分析（用户消息 → 事件 → 人格变化）
-        # ==========================================
+        # Step 2: 成长分析（事件提取、成长引擎应用、关系更新）
         growth_result = self.growth_pipeline.incremental_update(user_message)
 
-        # ==========================================
-        # Step 3: 获取最新状态（已包含成长变化）
-        # ==========================================
-        personality_context = self._get_personality_context()
+        # Step 2.5: 关系活动更新（每次互动）
+        self.relationship_state.update_activity(0.02)
+
+        # Step 3: 获取当前人格（必须在所有状态更新后重新计算，确保本次关系变化生效）
+        personality = self.personality_resolver.resolve()
+        self.current_personality = personality
+
+        personality_context = self._get_personality_context(personality)
         life_events = self._get_life_events(user_message)
         chat_memories = self._retrieve_chat_memories(user_message)
 
@@ -99,9 +149,7 @@ class Orchestrator:
             for ctx in life_events:
                 print(f"   - {ctx.title}: {ctx.summary[:40]}...")
 
-        # ==========================================
         # Step 4: 生成回复
-        # ==========================================
         reply = self.engine.generate(
             user_message=user_message,
             history=self.history,
@@ -110,19 +158,18 @@ class Orchestrator:
             personality_context=personality_context
         )
 
-        # ==========================================
-        # Step 5: 保存羽依回复（不进入向量库）
-        # ==========================================
-        self.store.add(self.target_user_id, reply, "assistant")
+        # Step 5: 保存助手回复（标记防止成长污染）
+        self.store.add(
+            self.target_user_id,
+            reply,
+            "assistant",
+            metadata={
+                "memory_type": "assistant_response",
+                "ignore_growth": True
+            }
+        )
 
-        # ==========================================
-        # Step 6: 更新关系状态（每次互动增加活动）
-        # ==========================================
-        self.relationship_state.update_activity(0.02)
-
-        # ==========================================
-        # Step 7: 更新工作记忆
-        # ==========================================
+        # Step 6: 更新工作记忆
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": reply})
 
@@ -144,6 +191,3 @@ class Orchestrator:
             "working_memory": len(self.history),
             "life_events": len(self.event_memory.get_all())
         }
-
-    def get_personality_state(self) -> dict:
-        return self.personality_controller.get_personality_context()

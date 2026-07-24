@@ -308,3 +308,12 @@ class GrowthPipeline:
 
     def get_current_personality(self):
         return self.resolver.resolve()
+
+    # ---- 新增：便捷访问 GrowthState ----
+    @property
+    def state(self):
+        """
+        暴露 GrowthState，供 Orchestrator / 调试使用。
+        避免外部直接依赖 GrowthEngine 的内部结构。
+        """
+        return self.growth_engine.state

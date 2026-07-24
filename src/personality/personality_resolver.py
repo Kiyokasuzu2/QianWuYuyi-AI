@@ -1,13 +1,13 @@
 """
-人格解析器 PersonalityResolver v1.6
+人格解析器 PersonalityResolver v1.7
 
 职责:
-GrowthRecord累积 + GrowthState实时指标 + 固定人格 → 当前羽依人格表现
+GrowthRecord累积 + GrowthState实时指标 + 固定人格 + 人格演化 → 当前羽依人格表现
 
-v1.6 更新:
-- 接入 GrowthAccumulator，从 GrowthRecord 累积长期人格基础
-- 保留 GrowthState 实时指标用于短期微调
-- 修复 growth_records 空列表引用陷阱
+v1.7 更新:
+- 接入 PersonalityEvolutionEngine，让人格变化带有惯性和稳定性
+- 接入 PersonalityHistory，记录人格变化轨迹
+- 保留 v1.6 的 GrowthAccumulator 累积机制
 """
 
 from typing import Dict, Optional, List
@@ -17,6 +17,9 @@ from src.personality.behavior_resolver import BehaviorResolver
 from src.personality.relationship_state import RelationshipState
 from src.personality.personality_vector import PersonalityVector
 from src.personality.growth_accumulator import GrowthAccumulator
+from src.personality.personality_evolution import PersonalityEvolutionEngine
+from src.personality.personality_history import PersonalityHistory
+from src.personality.trait_state import TraitState, create_trait_state
 
 
 class PersonalityResolver:
@@ -25,7 +28,7 @@ class PersonalityResolver:
         self,
         state: Optional[GrowthState] = None,
         relationship_state: Optional[RelationshipState] = None,
-        growth_records: Optional[List[Dict]] = None,  # Phase 3.2 新增
+        growth_records: Optional[List[Dict]] = None,
     ):
         self.state = state or GrowthState()
         self.relationship_state = relationship_state or RelationshipState()
@@ -36,6 +39,13 @@ class PersonalityResolver:
             growth_records if growth_records is not None else []
         )
         self.accumulator = GrowthAccumulator()
+
+        # Phase 3.3：人格演化引擎和历史记录
+        self.evolution_engine = PersonalityEvolutionEngine()
+        self.personality_history = PersonalityHistory()
+
+        # Phase 3.3：TraitState 缓存（按维度名索引）
+        self._trait_states: Dict[str, TraitState] = {}
 
     def resolve(self) -> PersonalityVector:
         """解析当前人格向量"""
@@ -68,9 +78,48 @@ class PersonalityResolver:
             base_personality=PersonalityProfile.BASE.copy(),
         )
 
-        # ---- 核心人格计算（长期累积 + 短期实时微调） ----
+        # ---- Phase 3.3：使用演化引擎处理每个维度 ----
+        evolved = {}
+        base = PersonalityProfile.BASE.copy()
+        core_dimensions = ["warmth", "gentleness", "shyness", "sensitivity",
+                           "emotional_expression", "caring"]
+
+        for dim in core_dimensions:
+            # 获取或创建 TraitState
+            if dim not in self._trait_states:
+                self._trait_states[dim] = create_trait_state(dim, base.get(dim, 0.5))
+
+            trait_state = self._trait_states[dim]
+
+            # 计算本次偏移量
+            growth_delta = accumulated.get(dim, base.get(dim, 0.5)) - trait_state["current_value"]
+
+            # 通过演化引擎更新
+            updated_state = self.evolution_engine.update_trait(
+                trait_state=trait_state,
+                growth_delta=growth_delta,
+                history=self.personality_history,
+            )
+
+            # 记录变化
+            old_value = trait_state["current_value"]
+            new_value = updated_state["current_value"]
+            if abs(new_value - old_value) > 0.005:
+                self.personality_history.record_change(
+                    before={dim: old_value},
+                    after={dim: new_value},
+                    reason=f"累积偏移量 {growth_delta:+.4f}",
+                )
+
+            # 更新缓存
+            self._trait_states[dim] = updated_state
+
+            # 演化后的值
+            evolved[dim] = new_value
+
+        # ---- 核心人格计算（演化后 + 短期实时微调） ----
         warmth = self._clamp(
-            accumulated["warmth"]
+            evolved.get("warmth", base.get("warmth", 0.7))
             + growth_closeness * 0.25
             + growth_trust * 0.15
             + growth_warmth_memory * 0.15
@@ -78,21 +127,21 @@ class PersonalityResolver:
         )
 
         gentleness = self._clamp(
-            accumulated["gentleness"]
+            evolved.get("gentleness", base.get("gentleness", 0.8))
             + growth_closeness * 0.2
             + growth_emotional_memory * 0.1
             + rel_bond * 0.15
         )
 
         shyness = self._clamp(
-            accumulated["shyness"]
+            evolved.get("shyness", base.get("shyness", 0.75))
             - growth_security * 0.1
             + growth_attachment * 0.05
             - rel_familiarity * 0.1
         )
 
         sensitivity = self._clamp(
-            accumulated["sensitivity"]
+            evolved.get("sensitivity", base.get("sensitivity", 0.8))
             + growth_awareness * 0.2
         )
 
@@ -104,7 +153,7 @@ class PersonalityResolver:
         )
 
         emotional_expression = self._clamp(
-            accumulated["emotional_expression"]
+            evolved.get("emotional_expression", base.get("emotional_expression", 0.65))
             + growth_closeness * 0.25
             + growth_confidence * 0.15
             + growth_security * 0.1
@@ -112,7 +161,7 @@ class PersonalityResolver:
         )
 
         caring = self._clamp(
-            accumulated["caring"]
+            evolved.get("caring", base.get("caring", 0.7))
             + growth_closeness * 0.25
             + growth_trust * 0.15
             + rel_bond * 0.2

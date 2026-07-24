@@ -1,12 +1,13 @@
 """
-人格解析器 PersonalityResolver v1.8
+人格解析器 PersonalityResolver v1.9
 
 职责:
 GrowthRecord累积 + GrowthState实时指标 + 固定人格 + 人格演化 → 当前羽依人格表现
 
-v1.8 更新:
-- 接入 PersonalityTension 检测，输出人格矛盾信息
-- 保留 v1.7 的 EvolutionEngine 和 History 机制
+v1.9 更新:
+- growth_history 改为构造注入，与 GrowthPipeline 共享同一实例
+- 接入 SelfModelStore，让自我认知进入人格输出
+- 保留 v1.8 的 Tension 检测和 EvolutionEngine 机制
 """
 
 from typing import Dict, Optional, List
@@ -20,6 +21,8 @@ from src.personality.personality_evolution import PersonalityEvolutionEngine
 from src.personality.personality_history import PersonalityHistory
 from src.personality.trait_state import TraitState, create_trait_state
 from src.personality.personality_tension import detect_tensions, get_tension_summary
+from src.personality.personality_growth_record import PersonalityGrowthHistory
+from src.personality.self_model_store import SelfModelStore
 
 
 class PersonalityResolver:
@@ -29,6 +32,7 @@ class PersonalityResolver:
         state: Optional[GrowthState] = None,
         relationship_state: Optional[RelationshipState] = None,
         growth_records: Optional[List[Dict]] = None,
+        growth_history: Optional[PersonalityGrowthHistory] = None,
     ):
         self.state = state or GrowthState()
         self.relationship_state = relationship_state or RelationshipState()
@@ -42,6 +46,14 @@ class PersonalityResolver:
         self.evolution_engine = PersonalityEvolutionEngine()
         self.personality_history = PersonalityHistory()
         self._trait_states: Dict[str, TraitState] = {}
+
+        # Phase 3.4：SelfModel 存储（接收外部传入的 growth_history）
+        self.growth_history = (
+            growth_history
+            if growth_history is not None
+            else PersonalityGrowthHistory()
+        )
+        self.self_model_store = SelfModelStore()
 
     def resolve(self) -> PersonalityVector:
         """解析当前人格向量"""
@@ -225,6 +237,13 @@ class PersonalityResolver:
         })
         tension_summary = get_tension_summary(active_tensions)
 
+        # ---- Phase 3.4 Step 4：更新并注入 SelfModel ----
+        if self.self_model_store.should_update(self.growth_history):
+            self.self_model_store.update(self.growth_history, self._trait_states)
+
+        self_model = self.self_model_store.get()
+        identity_summary = self_model.get("identity_summary", "") if self_model else ""
+
         data_dict = {
             "warmth": warmth,
             "gentleness": gentleness,
@@ -251,8 +270,10 @@ class PersonalityResolver:
             "interaction_familiarity_level": interaction_label,
             "behaviors": behaviors,
             "identities": identities,
-            "active_tensions": active_tensions,        # Phase 3.3 新增
-            "tension_summary": tension_summary,        # Phase 3.3 新增
+            "active_tensions": active_tensions,
+            "tension_summary": tension_summary,
+            "self_model": self_model,           # Phase 3.4 新增
+            "identity_summary": identity_summary,  # Phase 3.4 新增
         }
 
         return PersonalityVector(data_dict)

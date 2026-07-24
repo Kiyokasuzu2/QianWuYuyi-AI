@@ -1,6 +1,7 @@
 """
 人格控制器（PersonalityController）
 职责：将人格参数转化为回复风格控制指令，注入 LLM Prompt
+注意：此模块已标记为 Deprecated，仅保留兼容性。新架构请使用 PersonalityPromptFormatter。
 """
 
 from typing import Dict, Optional
@@ -9,7 +10,7 @@ from src.personality.personality_resolver import PersonalityResolver
 
 class PersonalityController:
     """
-    人格控制器
+    人格控制器（已弃用）
     输入：PersonalityResolver 输出的人格参数
     输出：用于注入 LLM 的 style 指令
     """
@@ -24,7 +25,7 @@ class PersonalityController:
         warmth = personality.get("warmth", 0.5)
         shyness = personality.get("shyness", 0.5)
         attachment = personality.get("attachment_level", "探索")
-        trust = personality.get("trust_level", "试探")
+        interaction_level = personality.get("interaction_familiarity_level", "试探")
         initiative = personality.get("initiative", 0.3)
         care_level = personality.get("care_level", 0.3)
         self_expression = personality.get("self_expression", 0.3)
@@ -70,9 +71,9 @@ class PersonalityController:
         # ---- 第三层：关系距离 ----
         lines.append("")
         lines.append("【关系距离】")
-        if trust in ["深信", "完全信任"]:
+        if interaction_level in ["深信", "完全信任"]:
             lines.append("- 可以自然地表达信任感")
-        elif trust in ["信任", "深信"]:
+        elif interaction_level in ["信任", "深信"]:
             lines.append("- 可以表达信任感，但仍保持适度边界")
 
         if attachment in ["依赖", "安全依恋"]:
@@ -123,7 +124,7 @@ class PersonalityController:
 
         warmth = personality.get("warmth", 0.5)
         shyness = personality.get("shyness", 0.5)
-        trust = personality.get("trust_level", "试探")
+        interaction_level = personality.get("interaction_familiarity_level", "试探")
 
         style_parts = []
         if warmth >= 0.7:
@@ -136,7 +137,7 @@ class PersonalityController:
         if shyness >= 0.6:
             style_parts.append("略带害羞")
 
-        if trust in ["信任", "深信", "完全信任"]:
+        if interaction_level in ["信任", "深信", "完全信任"]:
             style_parts.append("信任对方")
 
         return f"当前人格：{'，'.join(style_parts)}。回复保持自然亲切，不刻意卖萌，不模板化。"
@@ -150,7 +151,7 @@ class PersonalityController:
             "warmth": personality.get("warmth", 0.5),
             "shyness": personality.get("shyness", 0.5),
             "attachment_level": personality.get("attachment_level", "探索"),
-            "trust_level": personality.get("trust_level", "试探"),
+            "interaction_familiarity_level": personality.get("interaction_familiarity_level", "试探"),
             "behaviors": personality.get("behaviors", {}),
         }
 

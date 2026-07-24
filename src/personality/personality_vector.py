@@ -20,8 +20,6 @@ class PersonalityVector:
     def get(self, key: str, default: float = 0.0) -> float:
         """获取数值型参数，默认返回 0.0（供旧代码使用）"""
         val = self._data.get(key, default)
-        # 如果值是 bool 或 str，尝试安全转换？原逻辑直接返回可能非 float
-        # 但保持原有行为，仅当需要时使用此方法，其他场景建议用属性访问
         return val
 
     def get_label(self, key: str, default: str = "未知") -> str:
@@ -49,7 +47,7 @@ class PersonalityVector:
             "sensitivity": self.get("sensitivity"),
             "dependence": self.get("dependence"),
             "attachment_level": self.get_label("attachment_level", "未知"),
-            "trust_level": self.get_label("trust_level", "未知"),
+            "interaction_familiarity_level": self.get_label("interaction_familiarity_level", "未知"),
         }
 
     # ========== 新增：通用取值方法 ==========
@@ -89,5 +87,5 @@ class PersonalityVector:
             f"温暖:{s['warmth']:.2f}, "
             f"害羞:{s['shyness']:.2f}, "
             f"依恋:{s['attachment_level']}, "
-            f"信任:{s['trust_level']}"
+            f"交流熟悉度:{s['interaction_familiarity_level']}"
         )

@@ -1,13 +1,11 @@
 """
-人格解析器 PersonalityResolver v1.4
+人格解析器 PersonalityResolver v1.5.1
 
 职责:
 GrowthState + RelationshipState + 固定人格 → 当前羽依人格表现
 
-v1.4 更新:
-- 分离固定人格与关系阶段描述：persona_summary 仅描述稳定性格特质，
-  关系进度由 PersonalityPromptFormatter 根据当前 familiarity 动态生成。
-- 调整依赖/陪伴类描述的生成条件，避免初识阶段出现越级表达。
+v1.5.1 修复:
+- 修复 dependence 字段引用错误（base["dependence"] 已从 PersonalityProfile 移除，改用默认值 0.5）
 """
 
 from typing import Dict, Optional
@@ -84,8 +82,9 @@ class PersonalityResolver:
             + growth_awareness * 0.2
         )
 
+        # v1.5.1 修复：dependence 默认值 0.5（原 base["dependence"] 已移除）
         dependence = self._clamp(
-            base["dependence"]
+            0.5
             + growth_attachment * 0.3
             + growth_closeness * 0.1
             + rel_bond * 0.15
@@ -174,9 +173,9 @@ class PersonalityResolver:
             self_expression, initiative, care_level
         )
 
-        # ---- 信任标签（加权合并） ----
+        # ---- 交流熟悉度标签（原 trust_label，语义迁移） ----
         combined_trust = growth_trust * 0.4 + rel_trust * 0.6
-        trust_level = self._get_trust_label(combined_trust)
+        interaction_label = self._get_interaction_familiarity_label(combined_trust)
 
         # ---- 组装人格数据字典 ----
         data_dict = {
@@ -202,14 +201,14 @@ class PersonalityResolver:
             ),
             "persona_summary": persona_summary,
             "attachment_level": self._get_attachment_label(growth_attachment),
-            "trust_level": trust_level,
+            "interaction_familiarity_level": interaction_label,
             "behaviors": behaviors,
             "identities": identities,
         }
 
         return PersonalityVector(data_dict)
 
-    # ========== 人格摘要生成（v1.4 只描述稳定性格，不涉及关系进度） ==========
+    # ========== 人格摘要生成（v1.5 措辞中性化） ==========
     def _generate_persona_summary(
         self, warmth, shyness,
         emotional_expression, self_expression,
@@ -217,7 +216,7 @@ class PersonalityResolver:
     ) -> str:
         """
         生成稳定人格摘要，仅基于性格特质，不包含当前关系阶段描述。
-        关系阶段（如“初识”“习惯陪伴”）由 PersonalityPromptFormatter 动态生成。
+        关系阶段由 PersonalityPromptFormatter 动态生成。
         """
         parts = []
 
@@ -243,11 +242,11 @@ class PersonalityResolver:
         if self_expression >= 0.6:
             parts.append("有自己的想法并愿意表达")
 
-        # 对他人的关心倾向（不特指某个对象）
+        # 对他人的关心倾向（不特指某个对象，改为中性表述）
         if initiative >= 0.6 and care_level >= 0.6:
-            parts.append("会主动关心在意的人")
+            parts.append("会主动关注对方的表达和状态")
         elif care_level >= 0.6:
-            parts.append("在意身边之人的感受")
+            parts.append("会在交流中关注对方的表达和状态")
 
         if not parts:
             return "羽依正在逐渐认识这个世界和身边的人。"
@@ -268,7 +267,7 @@ class PersonalityResolver:
         return "安全依恋"
 
     @staticmethod
-    def _get_trust_label(score):
+    def _get_interaction_familiarity_label(score):
         if score < 0.2: return "怀疑"
         if score < 0.4: return "试探"
         if score < 0.6: return "信任"

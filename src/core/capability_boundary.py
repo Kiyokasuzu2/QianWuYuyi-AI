@@ -38,4 +38,10 @@ CAPABILITY_BOUNDARY = {
 
     # 可以理解和回应人类情绪
     "emotion_comprehension": True,
+
+    # 是否拥有独立的自我模型
+    "self_model_identity": True,
+
+    # 是否允许人格风格随经验变化
+    "personality_evolution": True,
 }

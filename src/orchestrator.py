@@ -87,7 +87,7 @@ class Orchestrator:
             "warmth": personality.get("warmth"),
             "shyness": personality.get("shyness"),
             "attachment_level": personality.get("attachment_level"),
-            "trust_level": personality.get("trust_level"),
+            "interaction_familiarity_level": personality.get("interaction_familiarity_level"),
             "behaviors": personality.get("behaviors", {})
         }
 
@@ -105,7 +105,7 @@ class Orchestrator:
         print(f"温暖: {p.get('warmth')}")
         print(f"害羞: {p.get('shyness')}")
         print(f"依恋: {p.get('attachment_level')}")
-        print(f"信任: {p.get('trust_level')}")
+        print(f"交流熟悉度: {p.get('interaction_familiarity_level')}")
         print(f"行为摘要: {p.get('behavior_text', '')[:60]}...")
 
     def process(self, user_message: str) -> str:

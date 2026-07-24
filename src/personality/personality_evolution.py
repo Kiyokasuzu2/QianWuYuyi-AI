@@ -1,26 +1,19 @@
 """
-人格演化引擎 (PersonalityEvolutionEngine) v1.0
+人格演化引擎 (PersonalityEvolutionEngine) v1.1
 
 职责：
 接收 GrowthAccumulator 输出的成长偏移量，结合 TraitState 和 PersonalityHistory，
 计算人格维度的动态演化（值、动量、稳定性、置信度）。
+支持 TRAIT_RELATIONS 联动（只影响动量，不改变数值）。
 
-设计原则：
-- 高稳定性时对外界变化产生“免疫”，不轻易改变
-- 连续同方向变化增强动量，形成趋势
-- 反向变化重置动量，防止人格漂移
-- 无变化时动量缓慢衰减
-- 每次验证提高稳定性，长期不验证缓慢降低
-- 置信度基于验证次数和一致性
-
-v1.0 范围：
-- update_trait() 核心方法
-- 不包含 TRAIT_RELATIONS 联动
-- 不包含 PERSONALITY_TENSIONS 矛盾处理
+v1.1 更新：
+- 增加 apply_relations 方法，实现人格维度联动
+- 联动效果受目标稳定性影响（高稳定性抗联动）
+- 明确设置反向联动的 direction
 """
 
-from typing import Optional
-from src.personality.trait_state import TraitState, create_trait_state
+from typing import Optional, Dict
+from src.personality.trait_state import TraitState
 from src.personality.personality_history import PersonalityHistory
 
 
@@ -40,34 +33,16 @@ class PersonalityEvolutionEngine:
     ) -> TraitState:
         """
         综合更新单一人格维度。
-
-        Args:
-            trait_state: 当前特质状态
-            growth_delta: 来自 GrowthAccumulator 的偏移量（可正可负）
-            history: 人格历史记录（用于稳定性计算）
-
-        Returns:
-            更新后的 TraitState
         """
         if history is None:
             history = PersonalityHistory()
 
-        # 1. 确定本次变化方向
         direction = self._determine_direction(growth_delta)
-
-        # 2. 更新当前值
         new_value = self._apply_growth(trait_state, growth_delta)
-
-        # 3. 更新动量
         new_momentum = self._update_momentum(trait_state, direction)
-
-        # 4. 更新稳定性
         new_stability = self._update_stability(trait_state, history)
-
-        # 5. 更新置信度
         new_confidence = self._update_confidence(trait_state, direction, history)
 
-        # 6. 组装更新后的状态
         updated: TraitState = {
             "trait": trait_state["trait"],
             "current_value": round(new_value, 4),
@@ -76,19 +51,56 @@ class PersonalityEvolutionEngine:
             "stability": round(new_stability, 4),
             "confidence": round(new_confidence, 4),
             "last_growth_direction": direction,
-            "last_updated": trait_state.get("last_updated", ""),  # 由调用者设置
-            "consecutive_same_direction": self._update_consecutive(
-                trait_state, direction
-            ),
+            "last_updated": trait_state.get("last_updated", ""),
+            "consecutive_same_direction": self._update_consecutive(trait_state, direction),
         }
         return updated
 
+    def apply_relations(
+        self,
+        trait_name: str,
+        growth_delta: float,
+        trait_states: Dict[str, TraitState],
+    ) -> Dict[str, TraitState]:
+        """
+        当一个维度发生变化时，联动更新相关维度的动量。
+        只修改 momentum 和 direction，不修改 current_value。
+        联动效果受目标维度 stability 影响：越稳定越抗联动。
+        """
+        from src.personality.trait_relations import get_relations_for
+
+        relations = get_relations_for(trait_name)
+        for target, relation in relations.items():
+            if target not in trait_states:
+                continue
+
+            target_state = trait_states[target]
+            strength = relation["strength"]
+            rel_type = relation["type"]
+            target_stability = target_state.get("stability", 0.3)
+
+            # 联动效果受目标稳定性抑制
+            effect = strength * 0.5 * (1 - target_stability)
+
+            if rel_type == "positive":
+                if growth_delta > 0:
+                    target_state["momentum"] = min(1.0, target_state.get("momentum", 0.1) + effect)
+                    target_state["direction"] = "increase"
+                elif growth_delta < 0:
+                    target_state["momentum"] = min(1.0, target_state.get("momentum", 0.1) + effect)
+                    target_state["direction"] = "decrease"
+            else:
+                # 反向联动
+                if growth_delta > 0:
+                    target_state["momentum"] = max(0.0, target_state.get("momentum", 0.1) - effect)
+                    target_state["direction"] = "decrease"
+                elif growth_delta < 0:
+                    target_state["momentum"] = min(1.0, target_state.get("momentum", 0.1) + effect)
+                    target_state["direction"] = "increase"
+
+        return trait_states
+
     def _apply_growth(self, trait_state: TraitState, growth_delta: float) -> float:
-        """
-        计算本次值变化。
-        有效变化 = 偏移量 × 动量 × (1 - 稳定性 × 0.5)
-        稳定性越高，对外界影响的“免疫”越强。
-        """
         stability = trait_state.get("stability", 0.3)
         momentum = trait_state.get("momentum", 0.1)
         effective = growth_delta * momentum * (1 - stability * 0.5)
@@ -96,12 +108,6 @@ class PersonalityEvolutionEngine:
         return self._clamp(new_value)
 
     def _update_momentum(self, trait_state: TraitState, direction: str) -> float:
-        """
-        更新动量：
-        - 连续同方向：动量 +0.1（上限1.0）
-        - 方向变化（反向）：重置为 0.1
-        - 稳定（无变化）：动量 -0.05（下限0.0）
-        """
         last_direction = trait_state.get("last_growth_direction", "stable")
         current_momentum = trait_state.get("momentum", 0.1)
 
@@ -110,37 +116,15 @@ class PersonalityEvolutionEngine:
         elif direction == last_direction:
             return min(1.0, current_momentum + 0.1)
         else:
-            return 0.1  # 反向重置
+            return 0.1
 
-    def _update_stability(
-        self,
-        trait_state: TraitState,
-        history: PersonalityHistory,
-    ) -> float:
-        """
-        更新稳定性：
-        基于该维度的历史变化次数。
-        每次验证 +0.05，上限 0.95，起始 0.3。
-        如果长期没有变化记录，稳定性不降低（保持当前值）。
-        """
+    def _update_stability(self, trait_state: TraitState, history: PersonalityHistory) -> float:
         trait_name = trait_state.get("trait", "")
         changes = history.get_changes_for_dimension(trait_name)
         verified_count = len(changes)
         return min(0.95, 0.3 + verified_count * 0.05)
 
-    def _update_confidence(
-        self,
-        trait_state: TraitState,
-        direction: str,
-        history: PersonalityHistory,
-    ) -> float:
-        """
-        更新置信度：
-        - 连续同方向变化：置信度 +0.05
-        - 稳定（无变化）：保持不变
-        - 方向变化（反向）：置信度 -0.1
-        范围：0.1 ~ 1.0
-        """
+    def _update_confidence(self, trait_state: TraitState, direction: str, history: PersonalityHistory) -> float:
         last_direction = trait_state.get("last_growth_direction", "stable")
         current_confidence = trait_state.get("confidence", 0.1)
 
@@ -152,7 +136,6 @@ class PersonalityEvolutionEngine:
             return max(0.1, current_confidence - 0.1)
 
     def _determine_direction(self, growth_delta: float) -> str:
-        """根据偏移量判断方向"""
         if growth_delta > 0.001:
             return "increase"
         elif growth_delta < -0.001:
@@ -160,12 +143,7 @@ class PersonalityEvolutionEngine:
         else:
             return "stable"
 
-    def _update_consecutive(
-        self,
-        trait_state: TraitState,
-        direction: str,
-    ) -> int:
-        """更新连续同方向次数"""
+    def _update_consecutive(self, trait_state: TraitState, direction: str) -> int:
         last_direction = trait_state.get("last_growth_direction", "stable")
         if direction == last_direction and direction != "stable":
             return trait_state.get("consecutive_same_direction", 0) + 1

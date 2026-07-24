@@ -5,5 +5,10 @@ memory:
   search_top_k: 8
   min_relevance: 0.3
   target_user_id: "366648462"
+
 llm:
-  api_key: ""
+  api_key: "sk-e8ae573fda864feebb937f74bb6e929e"
+  api_base: "https://api.deepseek.com"
+  model: "deepseek-v4-pro"
+  temperature: 0.7
+  max_tokens: 2048

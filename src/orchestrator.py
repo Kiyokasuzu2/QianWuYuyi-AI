@@ -4,6 +4,7 @@ from src.config import get_memory_config
 from src.personality.personality_controller import PersonalityController
 from src.personality.relationship_state import RelationshipState
 from src.growth.pipeline import GrowthPipeline
+from src.memory.memory_gate import MemoryGate
 
 
 class Orchestrator:
@@ -17,6 +18,7 @@ class Orchestrator:
         # 记忆系统
         self.store = MemoryStore()
         self.vector = VectorMemory()
+        self.memory_gate = MemoryGate()
 
         # 人生事件记忆
         self.event_memory = EventMemory()
@@ -56,11 +58,29 @@ class Orchestrator:
 
     def process(self, user_message: str) -> str:
         # ==========================================
-        # Step 1: 保存用户消息
+        # Step 1: 保存原始聊天记录（不向量化）
         # ==========================================
-        user_mem = self.store.add(self.target_user_id, user_message, "user")
-        if user_mem:
-            self.vector.add_memory(user_mem)
+        self.store.add(self.target_user_id, user_message, "user")
+
+        # ==========================================
+        # Step 1.5: 长期记忆审核与向量化（仅有意义的消息）
+        # ==========================================
+        verified = []
+        if len(user_message.strip()) >= 5:   # 过滤过短消息
+            verified = self.memory_gate.process(user_message)
+
+        for mem in verified:
+            structured = self.store.add(
+                self.target_user_id,
+                mem["content"],
+                "user",
+                metadata={
+                    **mem,                     # 保留Verifier完整输出
+                    "memory_type": "long_term" # 系统标记，放在最后确保不被覆盖
+                }
+            )
+            if structured:
+                self.vector.add_memory(structured)
 
         # ==========================================
         # Step 2: 成长分析（用户消息 → 事件 → 人格变化）

@@ -19,27 +19,21 @@ RelationshipState
         ↓
 PersonalityResolver
 
-
 职责:
-
 让羽依根据人生经历产生长期成长。
-
 """
 
-
 from typing import Optional
-
 
 from src.growth.event_extractor import EventExtractor
 from src.growth.event_normalizer import EventNormalizer
 from src.growth.event_validator import EventValidator
 from src.growth.event_history_matcher import EventHistoryMatcher
 from src.growth.growth_engine import GrowthEngine
-
+from src.growth.event_identity_resolver import resolve_event_identity
 
 from src.personality.personality_resolver import PersonalityResolver
 from src.personality.relationship_state import RelationshipState
-
 
 
 class GrowthPipeline:
@@ -49,301 +43,267 @@ class GrowthPipeline:
         event_memory=None,
         memory_store=None,
         user_id="366648462",
-        relationship_state: Optional[RelationshipState]=None
+        relationship_state: Optional[RelationshipState] = None
     ):
-
-        # =========================
         # 事件处理
-        # =========================
-
         self.extractor = EventExtractor()
         self.normalizer = EventNormalizer()
         self.validator = EventValidator()
         self.matcher = EventHistoryMatcher()
 
-        # =========================
         # 成长核心
-        # =========================
-
         self.growth_engine = GrowthEngine()
 
-        # =========================
         # 关系系统
-        # =========================
-
         self.relationship_state = (
-            relationship_state
-            or
-            RelationshipState()
+            relationship_state or RelationshipState()
         )
 
-        # =========================
         # 人格系统
-        # =========================
-
         self.resolver = PersonalityResolver(
             state=self.growth_engine.state,
             relationship_state=self.relationship_state
         )
 
-        # =========================
-        # 外部
-        # =========================
-
+        # 外部依赖
         self.store = memory_store
         self.event_memory = event_memory
         self.target_user_id = user_id
 
-    def _update_relationship(
-        self,
-        event
-    ):
-        event_type = event.get(
-            "event_type",
-            ""
-        )
+        # ===== 将 GrowthState 注入 Matcher，使其能从持久化历史中识别重复经历 =====
+        self.matcher.set_growth_state(self.growth_engine.state)
 
-        importance = event.get(
-            "importance",
-            0.5
-        )
+    # =================================================
+    # 增量成长更新（实时聊天入口）
+    # =================================================
+    def incremental_update(self, user_message: str):
+        """
+        单次聊天后的快速成长入口
 
-        category = event.get(
-            "category",
-            ""
-        )
+        用于 Orchestrator.process()
 
-        topic = event.get(
-            "canonical_topic",
-            event.get(
-                "topic",
-                ""
-            )
-        )
-
-        event_id = event.get(
-            "event_id",
-            ""
-        )
-
-        # =========================
-        # 关系建立
-        # =========================
-        if event_type == "relationship":
-            self.relationship_state.update_trust(
-                0.05 * importance
-            )
-            self.relationship_state.update_bond(
-                0.06 * importance
-            )
-            self.relationship_state.update_familiarity(
-                0.04 * importance
-            )
-            self.relationship_state.update_history(
-                0.03 * importance
-            )
-
-        # =========================
-        # 长期承诺
-        # =========================
-        elif event_type == "commitment":
-            self.relationship_state.update_trust(
-                0.06 * importance
-            )
-            self.relationship_state.update_bond(
-                0.08 * importance
-            )
-            self.relationship_state.update_promise(
-                0.10 * importance
-            )
-            self.relationship_state.update_history(
-                0.05 * importance
-            )
-
-        # =========================
-        # 羽依诞生
-        # =========================
-        elif event_type == "milestone":
-            if category == "羽依诞生阶段":
-                self.relationship_state.update_bond(
-                    0.04 * importance
-                )
-                self.relationship_state.update_history(
-                    0.05 * importance
-                )
-                self.relationship_state.add_important_event({
-                    "event_id":event_id,
-                    "topic":topic,
-                    "type":"birth"
-                })
-
-        # =========================
-        # 身份形成
-        # =========================
-        elif event_type == "identity":
-            self.relationship_state.update_history(
-                0.02 * importance
-            )
-
-        # =========================
-        # 高价值事件记录
-        # =========================
-        if importance >= 0.85:
-            self.relationship_state.add_milestone(
-                event_id,
-                topic
-            )
-
-    def run_full_consolidation(
-        self,
-        limit=None,
-        force_first_run=False
-    ):
-        print(
-            "📂 开始成长整理"
-        )
-
-        # =========================
-        # 提取事件
-        # =========================
+        不再跳过重复事件，让 GrowthEngine 自己决定 first/repeat 模式。
+        """
         try:
-            events = self.extractor.extract(
-                limit
-            )
-        except Exception as e:
-            print(
-                "❌事件提取失败:",
-                e
-            )
-            return {
-                "events":[],
-                "personality":
-                    self.resolver.resolve()
-            }
+            # 使用新增的 extract_from_text 方法处理当前消息
+            events = self.extractor.extract_from_text(user_message)
 
-        if not events:
-            print(
-                "⚠️没有提取到事件"
-            )
-            return {
-                "events":[],
-                "personality":
-                    self.resolver.resolve()
-            }
+            if not events:
+                return {
+                    "events": [],
+                    "personality": self.resolver.resolve()
+                }
 
-        print(
-            f"📝 原始事件 {len(events)} 个"
-        )
+            # 标准化
+            events = self.normalizer.normalize(events)
 
-        # =========================
-        # 标准化
-        # =========================
-        events = self.normalizer.normalize(
-            events
-        )
+            # 价值过滤
+            events = self.validator.validate(events)
 
-        print(
-            f"🧹标准化完成 {len(events)} 个"
-        )
+            if not events:
+                return {
+                    "events": [],
+                    "personality": self.resolver.resolve()
+                }
 
-        # =========================
-        # 价值过滤
-        # =========================
-        before=len(events)
-        events=self.validator.validate(
-            events
-        )
+            # ===== 关键修复：确保所有事件都已完成身份解析 =====
+            for e in events:
+                resolve_event_identity(e)
 
-        print(
-            f"🔍验证后 {len(events)} 个 "
-            f"(过滤 {before-len(events)} 个)"
-        )
+            # 历史匹配（非首次运行）
+            events = self.matcher.track(events, False)
 
-        if not events:
-            return {
-                "events":[],
-                "personality":
-                    self.resolver.resolve()
-            }
+            applied = []
 
-        # =========================
-        # 历史匹配
-        # =========================
-        events=self.matcher.track(
-            events,
-            force_first_run
-        )
-
-        applied=0
-        processed=[]
-
-        # =========================
-        # 应用成长
-        # =========================
-        for event in events:
-            try:
-                if not event.get(
-                    "is_first_occurrence",
-                    True
-                ):
-                    continue
-
-                # gating: only apply growth if validator marked validator_apply=True
+            for event in events:
+                # 检查 validator 是否允许应用成长
                 apply_flag = event.get("metadata", {}).get("validator_apply", True)
                 if not apply_flag:
-                    print(f"⏭️ Skipping apply for event {event.get('event_id', '')} due to validator_apply=False")
                     continue
 
-                result=self.growth_engine.apply(
-                    event
-                )
+                # 让 GrowthEngine 自行判断首次/重复模式
+                result = self.growth_engine.apply(event)
 
-                if result.get(
-                    "status"
-                )=="applied":
+                if result.get("status") == "applied":
+                    # 仅首次经历需要更新关系状态
+                    if result.get("mode") == "first":
+                        self._update_relationship(event)
+
+                    # 为便于调试，附上成长模式信息
+                    applied.append({
+                        **event,
+                        "growth_mode": result.get("mode")
+                    })
+
+                # 标记已处理记忆：事件已完成系统消费，无论是否产生成长
+                if self.store and event.get("source_ids"):
+                    try:
+                        self.store.mark_processed_batch(event["source_ids"])
+                    except AttributeError:
+                        pass
+
+            return {
+                "events": applied,
+                "personality": self.resolver.resolve()
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"⚠️ 增量成长失败: {e}")
+            return {
+                "events": [],
+                "personality": self.resolver.resolve()
+            }
+
+    # =================================================
+    # 关系更新（内部方法，已增加 importance 类型保护）
+    # =================================================
+    def _update_relationship(self, event):
+        event_type = event.get("event_type", "")
+
+        # 修复 importance 可能为 list 的问题，确保为数值
+        raw_importance = event.get("importance", 0.5)
+        if isinstance(raw_importance, (list, tuple)):
+            importance = float(raw_importance[0]) if len(raw_importance) > 0 else 0.5
+        elif isinstance(raw_importance, (int, float)):
+            importance = float(raw_importance)
+        else:
+            importance = 0.5
+
+        category = event.get("category", "")
+        topic = event.get(
+            "canonical_topic",
+            event.get("topic", "")
+        )
+        event_id = event.get("event_id", "")
+
+        # 关系建立
+        if event_type == "relationship":
+            self.relationship_state.update_trust(0.05 * importance)
+            self.relationship_state.update_bond(0.06 * importance)
+            self.relationship_state.update_familiarity(0.04 * importance)
+            self.relationship_state.update_history(0.03 * importance)
+
+        # 长期承诺
+        elif event_type == "commitment":
+            self.relationship_state.update_trust(0.06 * importance)
+            self.relationship_state.update_bond(0.08 * importance)
+            self.relationship_state.update_promise(0.10 * importance)
+            self.relationship_state.update_history(0.05 * importance)
+
+        # 羽依诞生
+        elif event_type == "milestone":
+            if category == "羽依诞生阶段":
+                self.relationship_state.update_bond(0.04 * importance)
+                self.relationship_state.update_history(0.05 * importance)
+                self.relationship_state.add_important_event({
+                    "event_id": event_id,
+                    "topic": topic,
+                    "type": "birth"
+                })
+
+        # 身份形成
+        elif event_type == "identity":
+            self.relationship_state.update_history(0.02 * importance)
+
+        # 高价值事件记录
+        if importance >= 0.85:
+            self.relationship_state.add_milestone(event_id, topic)
+
+    # =================================================
+    # 完整整合（批量处理，原逻辑保留）
+    # =================================================
+    def run_full_consolidation(self, limit=None, force_first_run=False):
+        """
+        批量历史整理
+
+        只处理首次事件，建立人格基线。
+        重复经历由实时 GrowthEngine 处理，防止离线重复强化。
+        """
+        print("📂 开始成长整理")
+
+        # 提取事件
+        try:
+            events = self.extractor.extract(limit)
+        except Exception as e:
+            print(f"❌ 事件提取失败: {e}")
+            return {
+                "events": [],
+                "personality": self.resolver.resolve()
+            }
+
+        if not events:
+            print("⚠️ 没有提取到事件")
+            return {
+                "events": [],
+                "personality": self.resolver.resolve()
+            }
+
+        print(f"📝 原始事件 {len(events)} 个")
+
+        # 标准化
+        events = self.normalizer.normalize(events)
+        print(f"🧹 标准化完成 {len(events)} 个")
+
+        # 价值过滤
+        before = len(events)
+        events = self.validator.validate(events)
+        print(f"🔍 验证后 {len(events)} 个 (过滤 {before - len(events)} 个)")
+
+        if not events:
+            return {
+                "events": [],
+                "personality": self.resolver.resolve()
+            }
+
+        # ===== 确保所有事件都已完成身份解析 =====
+        for e in events:
+            resolve_event_identity(e)
+
+        # 历史匹配
+        events = self.matcher.track(events, force_first_run)
+
+        applied = 0
+        processed = []
+
+        # 应用成长
+        for event in events:
+            try:
+                if not event.get("is_first_occurrence", True):
+                    continue
+
+                # gating: 仅当 validator_apply=True 才应用
+                apply_flag = event.get("metadata", {}).get("validator_apply", True)
+                if not apply_flag:
+                    print(f"⏭️ 跳过 event {event.get('event_id', '')} (validator_apply=False)")
+                    continue
+
+                result = self.growth_engine.apply(event)
+
+                if result.get("status") == "applied":
                     applied += 1
-                    processed.extend(
-                        event.get(
-                            "source_ids",
-                            []
-                        )
-                    )
-                    self._update_relationship(
-                        event
-                    )
+                    processed.extend(event.get("source_ids", []))
+                    self._update_relationship(event)
 
             except Exception as e:
-                print(
-                    "⚠️成长事件失败:",
-                    event.get(
-                        "topic"
-                    ),
-                    e
-                )
+                print(f"⚠️ 成长事件失败: {event.get('topic')}, {e}")
 
-        print(
-            f"🌱应用成长事件 {applied} 个"
-        )
+        print(f"🌱 应用成长事件 {applied} 个")
 
-        # =========================
         # 当前人格
-        # =========================
-        personality=self.resolver.resolve()
+        personality = self.resolver.resolve()
 
-        # =========================
         # 标记记忆
-        # =========================
         if self.store and processed:
-            self.store.mark_processed_batch(
-                processed
-            )
+            self.store.mark_processed_batch(processed)
 
         if self.event_memory:
             self.event_memory.refresh()
 
         return {
-            "events":events,
-            "personality":personality
+            "events": events,
+            "personality": personality
         }
 
     def get_current_personality(self):

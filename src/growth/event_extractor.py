@@ -115,7 +115,7 @@ class EventExtractor:
         memories
     ):
 
-        chat=self._format_memories(
+        chat = self._format_memories(
             memories
         )
 
@@ -159,22 +159,22 @@ conversation
 
 必须严格输出：
 
-{
+{{
 "events":[
-{
+{{
 "event":"事件名称",
 "topic":"事件主题",
 "event_type":"类型",
 "evidence":[
-{
+{{
 "text":"原文",
 "role":"user 或 assistant",
 "source_index":数字
-}
+}}
 ]
-}
+}}
 ]
-}
+}}
 
 
 
@@ -446,5 +446,29 @@ conversation
             print(
                 f" - [{e.get('event_type')}] {e.get('topic')}"
             )
+
+        return events
+
+    def extract_from_text(self, text: str):
+        """
+        从当前文本中提取事件（不依赖历史记忆库）
+        用于实时成长
+        """
+        # 构建单条消息的模拟记忆列表
+        memories = [
+            {
+                "role": "user",
+                "content": text,
+                "source_index": 0
+            }
+        ]
+
+        prompt = self.build_prompt(memories)
+        result = self.llm.generate_raw(prompt)
+        events = self.parse_result(result, memories, prompt=prompt)
+
+        print(f"✅ 从当前消息提取到 {len(events)} 个事件")
+        for e in events:
+            print(f" - [{e.get('event_type')}] {e.get('topic')}")
 
         return events

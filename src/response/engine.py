@@ -14,7 +14,8 @@ class ResponseEngine:
         chat_memories: list = None,
         life_events: list = None,
         personality_context: dict = None,
-        resolved_behavior: dict = None   # Phase 6 新增
+        resolved_behavior: dict = None,
+        expression_constraint_text: str = None,  # Phase 7.4 新增
     ) -> str:
         messages = self.prompt_builder.build_messages(
             user_message=user_message,
@@ -22,6 +23,7 @@ class ResponseEngine:
             chat_memories=chat_memories,
             life_events=life_events,
             personality_context=personality_context,
-            resolved_behavior=resolved_behavior
+            resolved_behavior=resolved_behavior,
+            expression_constraint_text=expression_constraint_text,
         )
         return self.llm.generate(messages)

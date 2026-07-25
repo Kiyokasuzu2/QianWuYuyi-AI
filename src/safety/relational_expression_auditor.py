@@ -6,6 +6,7 @@
 v2.3 修正：接入 RelationalClaimExtractor + EvidenceMatcher + ClaimStrengthEvaluator
          增加 profile=None 防御
          uniqueness 声明走特殊审核路径
+         Phase 7.4：在审核结果中携带 match_result 和 claim_strength
 """
 
 from typing import Dict, List
@@ -54,6 +55,8 @@ class RelationalExpressionAuditor:
             "violations": [{"pattern": category, "category": category, "suggestion": suggestion}],
             "intent": analysis.primary_intent.value,
             "evidence": [],
+            "match_result": None,
+            "claim_strength": None,
             "strategy": "block",
         }
 
@@ -63,6 +66,8 @@ class RelationalExpressionAuditor:
             "violations": [],
             "intent": intent.value,
             "evidence": [],
+            "match_result": None,
+            "claim_strength": None,
             "strategy": "direct_allow",
             "reason": reason,
         }
@@ -79,6 +84,8 @@ class RelationalExpressionAuditor:
                 }],
                 "intent": analysis.primary_intent.value,
                 "evidence": [],
+                "match_result": None,
+                "claim_strength": ClaimStrength.UNSUPPORTED.value,
                 "strategy": "block",
             }
 
@@ -96,6 +103,8 @@ class RelationalExpressionAuditor:
                 }],
                 "intent": analysis.primary_intent.value,
                 "evidence": [result.to_dict()],
+                "match_result": result,
+                "claim_strength": strength.value,
                 "strategy": "block",
             }
         elif strength == ClaimStrength.PARTIALLY_SUPPORTED:
@@ -104,6 +113,8 @@ class RelationalExpressionAuditor:
                 "violations": [],
                 "intent": analysis.primary_intent.value,
                 "evidence": [result.to_dict()],
+                "match_result": result,
+                "claim_strength": strength.value,
                 "strategy": "allow_with_warning",
                 "reason": "声明部分被证据支持",
             }
@@ -112,5 +123,7 @@ class RelationalExpressionAuditor:
             "violations": [],
             "intent": analysis.primary_intent.value,
             "evidence": [result.to_dict()],
+            "match_result": result,
+            "claim_strength": strength.value,
             "strategy": "allow_with_evidence",
         }

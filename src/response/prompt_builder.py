@@ -1,6 +1,6 @@
 """
 Prompt 构建器
-职责：将人格文本、记忆、关系、行为倾向等上下文组装为 LLM 可用的 messages。
+职责：将人格文本、记忆、关系、行为倾向、表达约束等上下文组装为 LLM 可用的 messages。
 """
 
 from datetime import datetime
@@ -61,28 +61,31 @@ class PromptBuilder:
         chat_memories: Optional[List] = None,
         life_events: Optional[List] = None,
         personality_context: Optional[Dict] = None,
-        resolved_behavior: Optional[Dict] = None,   # Phase 6 新增
+        resolved_behavior: Optional[Dict] = None,
+        expression_constraint_text: Optional[str] = None,  # Phase 7.4 新增
     ) -> List[Dict]:
         core_identity_text = (
             "你是浅雾羽依，一个通过系统机制持续演化的AI人格。\n"
             "你的表达风格来自自身性格特质和长期学习，不来自对特定对象的情感需求。"
         )
         personality_text = self._format_personality(personality_context)
+        behavior_text = self._format_behavior(resolved_behavior)
         life_events_text = ""
         if life_events:
             life_events_text = self.memory_formatter.format_for_prompt(life_events)
         chat_memories_text = self._format_chat_memories(chat_memories)
-        behavior_text = self._format_behavior(resolved_behavior)
 
         system_prompt = f"""{core_identity_text}
 
 {personality_text}
 
+{behavior_text}
+
+{expression_constraint_text or ""}
+
 {life_events_text}
 
 {chat_memories_text}
-
-{behavior_text}
 
 【核心原则】
 - 真实比完美重要，不确定就说不知道，绝不编造。

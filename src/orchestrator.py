@@ -22,6 +22,11 @@ from src.personality.behavior_engine import BehaviorEngine
 from src.personality.conflict_resolver import ConflictResolver
 from src.personality.self_model_builder import SelfModelBuilder
 
+# Phase 7.4：关系表达约束
+from src.safety.constraint_resolver import ConstraintResolver
+from src.safety.relationship_expression_policy import RelationshipExpressionPolicy
+from src.safety.claim_strength_evaluator import ClaimStrength
+
 
 class Orchestrator:
     def __init__(self):
@@ -196,8 +201,37 @@ class Orchestrator:
 
         # Step 4.5：表达真实性审核
         audit_result = self.expression_verifier.verify(reply, self.relationship_profile)
-        if not audit_result["safe"]:
-            print(f"⚠️ 回复未通过表达审核: {audit_result['violations']}")
+
+        # Phase 7.4：从审核结果生成表达约束
+        expression_constraint_text = ""
+        if audit_result:
+            match_result = audit_result.get("match_result")
+            claim_strength_str = audit_result.get("claim_strength")
+            if match_result is not None and claim_strength_str is not None:
+                try:
+                    claim_strength = ClaimStrength(claim_strength_str)
+                except ValueError:
+                    claim_strength = ClaimStrength.UNSUPPORTED
+                constraint = ConstraintResolver.resolve(match_result, claim_strength)
+                expression_constraint_text = RelationshipExpressionPolicy.to_prompt(constraint)
+            elif not audit_result.get("safe", True):
+                # 如果没有证据细节但审核不通过，使用 violations 中的建议作为兜底
+                hint = audit_result.get("violations", [{}])[0].get("suggestion", "")
+                if hint:
+                    expression_constraint_text = f"【表达注意】{hint}"
+
+        # 如果有约束，重新生成回复（或直接传入下次生成，此处选择简单替换）
+        if expression_constraint_text:
+            # 重新生成时附带约束
+            reply = self.engine.generate(
+                user_message=user_message,
+                history=self.history,
+                chat_memories=chat_memories,
+                life_events=life_events,
+                personality_context=personality_context,
+                resolved_behavior=resolved_behavior_data,
+                expression_constraint_text=expression_constraint_text,
+            )
 
         # Step 5: 保存助手回复
         self.store.add(

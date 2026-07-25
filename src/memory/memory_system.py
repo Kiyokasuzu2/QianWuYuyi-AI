@@ -19,7 +19,7 @@ from datetime import datetime
 
 
 from src.memory.identity_memory import IdentityMemory
-from src.memory.store import MemoryStore
+from src.memory.memory_store import MemoryStore
 from src.memory.vector import VectorMemory
 from src.memory.event_memory import EventMemory
 
@@ -240,7 +240,7 @@ class MemorySystem:
 
             users=self._users(user_id)
 
-            memories=self.store.load_all()
+            memories=self.store.load()
 
 
             for mem in memories:

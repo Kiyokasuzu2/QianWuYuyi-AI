@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 from src.config import get
-from src.memory.store import MemoryStore
+from src.memory.memory_store import MemoryStore
 from src.response.llm import LLMClient
 from src.utils.text import clean_content
 

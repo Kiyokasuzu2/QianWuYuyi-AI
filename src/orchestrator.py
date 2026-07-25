@@ -1,3 +1,11 @@
+"""
+Orchestrator（总调度中心）Phase 11.6 覆盖版
+整合记忆、成长、人格、自我模型、情绪、安全、关系等所有子系统。
+Phase 11.6 新增：UserContext + UserResolver，多用户记忆分区。
+"""
+from datetime import datetime
+from typing import List, Dict, Optional
+
 from src.response.engine import ResponseEngine
 from src.memory import MemoryStore, VectorMemory, EventMemory
 from src.config import get_memory_config
@@ -6,10 +14,9 @@ from src.personality.relationship_state import RelationshipState
 from src.growth.pipeline import GrowthPipeline
 from src.memory.memory_gate import MemoryGate
 from src.personality.personality_prompt import PersonalityPromptFormatter
-from datetime import datetime
 
 # Phase 7.1：关系系统
-from src.relationship.relationship_profile import RelationshipProfile
+from src.relationship.relationship_influence_profile import RelationshipInfluenceProfile
 from src.relationship.relationship_repository import RelationshipRepository
 
 # Phase 7.1：安全系统
@@ -27,16 +34,38 @@ from src.safety.constraint_resolver import ConstraintResolver
 from src.safety.relationship_expression_policy import RelationshipExpressionPolicy
 from src.safety.claim_strength_evaluator import ClaimStrength
 
+# Phase 8.4：自我模型上下文
+from src.personality.self_model_store import SelfModelStore
+from src.personality.self_model_context_provider import SelfModelContextProvider
+
+# Phase 9.7：情绪系统完整集成
+from src.emotion.emotion_manager import EmotionManager
+from src.emotion.emotion_repository import EmotionRepository
+from src.emotion.emotion_trace_repository import EmotionTraceRepository
+from src.emotion.emotion_event_detector import EmotionEventDetector
+from src.emotion.emotion_growth_service import EmotionGrowthService
+
+# Phase 10.7：关系上下文
+from src.relationship.relationship_context_provider import RelationshipContextProvider
+
+# Phase 11.6：用户上下文与记忆分区
+from src.identity.user_context import UserContext
+from src.identity.user_resolver import UserResolver
+
 
 class Orchestrator:
     def __init__(self):
         self.engine = ResponseEngine()
         self.history = []
         self.history_limit = 20
-        self.target_user_id = get_memory_config()["target_user_id"]
 
-        # 记忆系统
-        self.store = MemoryStore()
+        # Phase 11.6：创建用户上下文
+        self.user_resolver = UserResolver()
+        self.user_context = self.user_resolver.resolve()
+        self.target_user_id = self.user_context.user_id
+
+        # 记忆系统（使用 UserContext 分区，通过新版 MemoryStore 支持）
+        self.store = MemoryStore(self.user_context)
         self.vector = VectorMemory()
         self.memory_gate = MemoryGate()
         self.event_memory = EventMemory()
@@ -61,12 +90,15 @@ class Orchestrator:
         self.current_personality = None
 
         # Phase 7.1：关系画像持久化
-        self.relationship_repository = RelationshipRepository()
-        loaded_profile = self.relationship_repository.load(self.target_user_id)
+        self.relationship_repository = RelationshipRepository(
+            data_dir="data",
+            user_id=self.target_user_id
+        )
+        loaded_profile = self.relationship_repository.load()
         if loaded_profile:
             self.relationship_profile = loaded_profile
         else:
-            self.relationship_profile = RelationshipProfile(
+            self.relationship_profile = RelationshipInfluenceProfile(
                 user_id=self.target_user_id,
                 relationship_start=datetime.now().isoformat()
             )
@@ -81,10 +113,30 @@ class Orchestrator:
         self.conflict_resolver = ConflictResolver()
         self.self_model_builder = SelfModelBuilder()
 
+        # Phase 8.4：自我模型上下文
+        self.self_model_store = SelfModelStore()
+        self.self_model_context_provider = SelfModelContextProvider(self.self_model_store)
+
+        # Phase 9.7：情绪系统完整集成
+        self.emotion_detector = EmotionEventDetector()
+        self.emotion_manager = EmotionManager(
+            EmotionRepository("data/emotion_state.json"),
+            EmotionTraceRepository("data/emotional_traces.json"),
+            counter_file="data/emotion_analysis_counter.json"
+        )
+        self.emotion_growth_service = EmotionGrowthService(
+            manager=self.emotion_manager,
+            self_model_store=self.self_model_store,
+            analysis_interval=10
+        )
+
+        # Phase 10.7：关系上下文提供器
+        self.relationship_context_provider = RelationshipContextProvider()
+
         self._init_memory_index()
 
     def _init_memory_index(self):
-        memories = self.store.get_by_user(self.target_user_id)
+        memories = self.store.load()
         if memories:
             print(f"Loading {len(memories)} historical memories...")
             self.vector.index_memories(memories, self.target_user_id)
@@ -132,21 +184,28 @@ class Orchestrator:
 
     def process(self, user_message: str) -> str:
         # Step 1: 保存用户消息
-        self.store.add(self.target_user_id, user_message, "user")
+        memory_entry = {
+            "content": user_message,
+            "role": "user",
+            "user_id": self.target_user_id,
+            "metadata": {"memory_type": "short_term"},
+        }
+        self.store.add(memory_entry)
 
         # Step 1.5: 长期记忆审核与向量化
         verified = []
         if len(user_message.strip()) >= 5:
             verified = self.memory_gate.process(user_message)
         for mem in verified:
-            structured = self.store.add(
-                self.target_user_id,
-                mem["content"],
-                "user",
-                metadata={**mem, "memory_type": "long_term"}
-            )
-            if structured:
-                self.vector.add_memory(structured)
+            structured_mem = {
+                "content": mem["content"],
+                "role": "user",
+                "user_id": self.target_user_id,
+                "metadata": {**mem, "memory_type": "long_term"},
+            }
+            self.store.add(structured_mem)
+            if structured_mem:
+                self.vector.add_memory(structured_mem)
 
         # Step 2: 成长分析
         growth_result = self.growth_pipeline.incremental_update(user_message)
@@ -189,6 +248,24 @@ class Orchestrator:
             for ctx in life_events:
                 print(f"   - {ctx.title}: {ctx.summary[:40]}...")
 
+        # ========== Phase 9.7 情绪系统完整接入 ==========
+        self.emotion_manager.update()
+        emotion_event = self.emotion_detector.detect(user_message)
+        if emotion_event:
+            self.emotion_manager.process_event(emotion_event)
+        emotion_ctx = self.emotion_manager.get_context(influence=0.3)
+
+        # Phase 8.4：自我模型上下文
+        self_model_ctx = self.self_model_context_provider.get_context()
+
+        # ========== Phase 10.7 关系上下文 ==========
+        relationship_state_v10 = self.relationship_repository.load_state()
+        cognitive_profile = self.relationship_repository.load_cognitive_profile()
+        relationship_ctx = self.relationship_context_provider.get_context(
+            state=relationship_state_v10,
+            profile=cognitive_profile,
+        )
+
         # Step 4：生成回复
         reply = self.engine.generate(
             user_message=user_message,
@@ -196,13 +273,15 @@ class Orchestrator:
             chat_memories=chat_memories,
             life_events=life_events,
             personality_context=personality_context,
-            resolved_behavior=resolved_behavior_data
+            resolved_behavior=resolved_behavior_data,
+            self_model_context=self_model_ctx,
+            emotion_context=emotion_ctx,
+            relationship_context=relationship_ctx,
         )
 
         # Step 4.5：表达真实性审核
         audit_result = self.expression_verifier.verify(reply, self.relationship_profile)
 
-        # Phase 7.4：从审核结果生成表达约束
         expression_constraint_text = ""
         if audit_result:
             match_result = audit_result.get("match_result")
@@ -215,14 +294,11 @@ class Orchestrator:
                 constraint = ConstraintResolver.resolve(match_result, claim_strength)
                 expression_constraint_text = RelationshipExpressionPolicy.to_prompt(constraint)
             elif not audit_result.get("safe", True):
-                # 如果没有证据细节但审核不通过，使用 violations 中的建议作为兜底
                 hint = audit_result.get("violations", [{}])[0].get("suggestion", "")
                 if hint:
                     expression_constraint_text = f"【表达注意】{hint}"
 
-        # 如果有约束，重新生成回复（或直接传入下次生成，此处选择简单替换）
         if expression_constraint_text:
-            # 重新生成时附带约束
             reply = self.engine.generate(
                 user_message=user_message,
                 history=self.history,
@@ -230,20 +306,32 @@ class Orchestrator:
                 life_events=life_events,
                 personality_context=personality_context,
                 resolved_behavior=resolved_behavior_data,
+                self_model_context=self_model_ctx,
+                emotion_context=emotion_ctx,
+                relationship_context=relationship_ctx,
                 expression_constraint_text=expression_constraint_text,
             )
 
         # Step 5: 保存助手回复
-        self.store.add(
-            self.target_user_id, reply, "assistant",
-            metadata={"memory_type": "assistant_response", "ignore_growth": True}
-        )
+        assistant_memory = {
+            "content": reply,
+            "role": "assistant",
+            "user_id": self.target_user_id,
+            "metadata": {"memory_type": "assistant_response", "ignore_growth": True},
+        }
+        self.store.add(assistant_memory)
 
         # Step 6: 更新工作记忆
         self.history.append({"role": "user", "content": user_message})
         self.history.append({"role": "assistant", "content": reply})
         if len(self.history) > self.history_limit * 2:
             self.history = self.history[-self.history_limit * 2:]
+
+        # ========== Phase 9.7 情绪成长（后台） ==========
+        self.emotion_manager.increment_analysis_counter()
+        if self.emotion_growth_service.should_analyze():
+            self.emotion_growth_service.analyze_and_merge()
+
         return reply
 
     def clear_history(self):
@@ -254,7 +342,7 @@ class Orchestrator:
 
     def get_memory_stats(self) -> dict:
         return {
-            "total_memories": self.store.count(),
+            "total_memories": len(self.store.load()),
             "vector_indexed": self.vector.count(),
             "working_memory": len(self.history),
             "life_events": len(self.event_memory.get_all())

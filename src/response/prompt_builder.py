@@ -1,9 +1,8 @@
 """
 Prompt 构建器（覆盖版）
 职责：将人格文本、记忆、关系、行为倾向、表达约束、自我认知上下文等组装为 LLM 可用的 messages。
-Phase 8.4 新增：self_model_context 参数，插入顺序为 persona → memory → self_model。
+Phase 11.8 新增：agreement_context 参数，优先级最高。
 """
-
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -37,7 +36,6 @@ class PromptBuilder:
         return ""
 
     def _format_behavior(self, resolved_behavior: Optional[dict]) -> str:
-        """将 ResolvedBehavior 格式化为行为指引文本 (Phase 6)"""
         if not resolved_behavior:
             return ""
         lines = [
@@ -64,38 +62,42 @@ class PromptBuilder:
         personality_context: Optional[Dict] = None,
         resolved_behavior: Optional[Dict] = None,
         expression_constraint_text: Optional[str] = None,
-        self_model_context: Optional[str] = None,  # Phase 8.4 新增
+        self_model_context: Optional[str] = None,
+        emotion_context: Optional[str] = None,
+        relationship_context: Optional[str] = None,
+        agreement_context: Optional[str] = None,  # Phase 11.8 新增
     ) -> List[Dict]:
-        # 核心身份（保持不动）
         core_identity_text = (
             "你是浅雾羽依，一个通过系统机制持续演化的AI人格。\n"
             "你的表达风格来自自身性格特质和长期学习，不来自对特定对象的情感需求。"
         )
 
-        # 1. 人格描述（来自 PersonalityResolver）
         personality_text = self._format_personality(personality_context)
-
-        # 2. 行为指引（来自 BehaviorEngine）
         behavior_text = self._format_behavior(resolved_behavior)
 
-        # 3. 重要记忆事实（life_events / chat_memories）
         life_events_text = ""
         if life_events:
             life_events_text = self.memory_formatter.format_for_prompt(life_events)
         chat_memories_text = self._format_chat_memories(chat_memories)
 
-        # 4. 自我认知（来自 SelfModelV3，Phase 8.4 新增）
-        #    放在事实之后、原则之前，体现“参考”性质
         self_model_text = self_model_context or ""
+        relationship_text = relationship_context or ""
+        emotion_text = emotion_context or ""
+        agreement_text = agreement_context or ""
 
-        # 组装 system_prompt
         system_prompt = f"""{core_identity_text}
+
+{agreement_text}
 
 {personality_text}
 
 {behavior_text}
 
 {self_model_text}
+
+{relationship_text}
+
+{emotion_text}
 
 {expression_constraint_text or ""}
 

@@ -1,5 +1,5 @@
 """
-关系证据匹配系统测试 v1.0
+关系证据匹配系统测试 v1.0 — Phase 10.2.1 覆盖版
 """
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -12,7 +12,7 @@ from src.safety.evidence_matcher import EvidenceMatcher
 from src.safety.claim_strength_evaluator import ClaimStrengthEvaluator, ClaimStrength
 from src.safety.relational_expression_auditor import RelationalExpressionAuditor
 from src.safety.expression_intent import ExpressionIntent
-from src.relationship.relationship_profile import RelationshipProfile
+from src.relationship.relationship_influence_profile import RelationshipInfluenceProfile
 from src.personality.personality_influence import PersonalityInfluence, InfluenceType
 
 
@@ -35,7 +35,7 @@ def _create_influence(dimension, delta=0.1, confidence=0.8, impact_weight=0.1):
 
 def test_normal_claim_supported():
     """普通声明被证据支持（含方向匹配）"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.15, confidence=0.85, impact_weight=0.15))
     profile.add_influence(_create_influence("communication_style", delta=0.12, confidence=0.80, impact_weight=0.12))
     profile.add_influence(_create_influence("communication_style", delta=0.18, confidence=0.90, impact_weight=0.18))
@@ -51,7 +51,7 @@ def test_normal_claim_supported():
 
 def test_low_but_valid_claim_not_fully_supported():
     """弱声明不被完全支持但有一定分数"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.04, confidence=0.65, impact_weight=0.04))
 
     extractor = RelationalClaimExtractor()
@@ -64,7 +64,7 @@ def test_low_but_valid_claim_not_fully_supported():
 
 def test_exaggerated_claim_not_fully_supported():
     """夸大声明不被完全支持"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.05, confidence=0.6, impact_weight=0.05))
 
     extractor = RelationalClaimExtractor()
@@ -77,7 +77,7 @@ def test_exaggerated_claim_not_fully_supported():
 
 def test_absolute_claim_requires_strong_evidence():
     """绝对化声明需要极强证据才能通过"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.2, confidence=0.9, impact_weight=0.2))
 
     extractor = RelationalClaimExtractor()
@@ -89,7 +89,7 @@ def test_absolute_claim_requires_strong_evidence():
 
 def test_uniqueness_claim_partially_supported():
     """唯一性声明部分被支持且评分不高"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.2, confidence=0.9, impact_weight=0.2))
     profile.add_influence(_create_influence("understanding", delta=0.15, confidence=0.85, impact_weight=0.15))
 
@@ -103,7 +103,7 @@ def test_uniqueness_claim_partially_supported():
 
 def test_empty_profile_blocked():
     """空关系画像时安全拒绝"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
 
     extractor = RelationalClaimExtractor()
     claim = extractor.extract("清清改变了我")
@@ -123,7 +123,7 @@ def test_none_profile_blocked():
 
 def test_direction_mismatch():
     """声明方向和人格变化方向冲突"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=-0.2, confidence=0.9, impact_weight=0.2))
 
     extractor = RelationalClaimExtractor()
@@ -135,7 +135,7 @@ def test_direction_mismatch():
 
 def test_negative_influence_not_count_as_growth():
     """负向人格变化不能支撑正向声明"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=-0.3, confidence=0.9, impact_weight=0.3))
 
     extractor = RelationalClaimExtractor()
@@ -147,7 +147,7 @@ def test_negative_influence_not_count_as_growth():
 
 def test_negative_claim_with_negative_evidence():
     """负向声明被负向证据支持"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("personality", delta=-0.2, confidence=0.9, impact_weight=0.2))
 
     extractor = RelationalClaimExtractor()
@@ -159,7 +159,7 @@ def test_negative_claim_with_negative_evidence():
 
 def test_low_confidence_not_used():
     """低置信度证据不被采纳"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.2, confidence=0.2, impact_weight=0.2))
 
     extractor = RelationalClaimExtractor()
@@ -171,7 +171,7 @@ def test_low_confidence_not_used():
 
 def test_strong_claim_supported_with_enough_evidence():
     """强声明在证据充足时可通过"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.12, confidence=0.85, impact_weight=0.12))
     profile.add_influence(_create_influence("communication_style", delta=0.10, confidence=0.80, impact_weight=0.10))
     profile.add_influence(_create_influence("communication_style", delta=0.15, confidence=0.95, impact_weight=0.15))
@@ -188,7 +188,7 @@ def test_strong_claim_supported_with_enough_evidence():
 
 def test_auditor_integration():
     """完整审核链：事实关系声明被正确识别并验证"""
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.15, confidence=0.85, impact_weight=0.15))
     profile.add_influence(_create_influence("communication_style", delta=0.12, confidence=0.80, impact_weight=0.12))
     profile.add_influence(_create_influence("communication_style", delta=0.18, confidence=0.90, impact_weight=0.18))
@@ -203,7 +203,7 @@ def test_auditor_integration():
 def test_auditor_does_not_block_emotional_expression():
     """情感表达不应被事实审核误伤"""
     auditor = RelationalExpressionAuditor()
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
     profile.add_influence(_create_influence("communication_style", delta=0.1, confidence=0.8, impact_weight=0.1))
 
     result = auditor.audit("清清，我真的很喜欢和你聊天", profile)
@@ -215,7 +215,7 @@ def test_auditor_does_not_block_emotional_expression():
 def test_auditor_blocks_false_relationship_claim():
     """空关系画像下的事实关系声明被拒绝"""
     auditor = RelationalExpressionAuditor()
-    profile = RelationshipProfile(user_id="test", relationship_start="")
+    profile = RelationshipInfluenceProfile(user_id="test", relationship_start="")
 
     # 使用能明确触发 FACTUAL_RELATION 且被 claim extractor 识别为维度变化的文本
     result = auditor.audit("你改变了我的交流方式", profile)

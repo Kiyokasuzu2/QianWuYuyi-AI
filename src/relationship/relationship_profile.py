@@ -1,48 +1,56 @@
 """
-关系画像 (RelationshipProfile) v1.2
+长期关系档案 (RelationshipProfile) — Phase 10.1
 
 职责：
-管理某个用户对羽依成长产生的所有真实影响记录。
-为 RelationalExpressionAuditor 提供事实依据。
+记录羽依与用户互动历史的长期总结，关注的是“互动模式认知”，
+而不是“用户事件对人格的影响”。
 
-v1.2 修正：
-- 移除冗余字段，保持数据纯粹
-- to_dict 完整序列化所有影响记录
+与旧版 `RelationshipProfile` (v1.2) 的区别：
+- 旧版：记录 PersonalityInfluence，用于成长系统和关系审核
+- 新版：记录互动模式和关键事件，用于关系认知和沟通策略调整
+
+两个档案在不同阶段可以并存，新版档案是 Phase 10 关系系统的核心数据结构。
 """
-
-from typing import Dict, List
 from dataclasses import dataclass, field
+from typing import List, Dict, Any
 from datetime import datetime
-from src.personality.personality_influence import PersonalityInfluence
 
 
 @dataclass
 class RelationshipProfile:
-    """某用户与羽依的关系画像。"""
+    """羽依与用户的关系档案（互动模式认知）"""
 
-    user_id: str
-    relationship_start: str
+    # 互动模式
+    candidate_patterns: List[str] = field(default_factory=list)   # 待验证的互动模式
+    confirmed_patterns: List[str] = field(default_factory=list)   # 已确认的互动模式
 
-    influences: List[PersonalityInfluence] = field(default_factory=list)
-    last_updated: str = ""
+    # 关键事件
+    important_events: List[Dict[str, Any]] = field(default_factory=list)  # 关键关系事件
 
-    def add_influence(self, influence: PersonalityInfluence):
-        self.influences.append(influence)
-        self.last_updated = datetime.now().isoformat()
+    # 时间统计
+    first_interaction: str = ""          # 首次互动时间
+    total_interactions: int = 0          # 总互动次数
 
-    def get_influences_by_dimension(self, dimension: str) -> List[PersonalityInfluence]:
-        return [i for i in self.influences if i.affected_dimension == dimension]
+    # 元信息
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
-    @property
-    def unique_dimensions(self) -> List[str]:
-        return list(set(i.affected_dimension for i in self.influences))
-
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            "user_id": self.user_id,
-            "relationship_start": self.relationship_start,
-            "influence_count": len(self.influences),
-            "unique_dimensions": self.unique_dimensions,
-            "last_updated": self.last_updated,
-            "influences": [i.to_dict() for i in self.influences],
+            "candidate_patterns": self.candidate_patterns,
+            "confirmed_patterns": self.confirmed_patterns,
+            "important_events": self.important_events,
+            "first_interaction": self.first_interaction,
+            "total_interactions": self.total_interactions,
+            "updated_at": self.updated_at,
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RelationshipProfile":
+        return cls(
+            candidate_patterns=data.get("candidate_patterns", []),
+            confirmed_patterns=data.get("confirmed_patterns", []),
+            important_events=data.get("important_events", []),
+            first_interaction=data.get("first_interaction", ""),
+            total_interactions=data.get("total_interactions", 0),
+            updated_at=data.get("updated_at", ""),
+        )

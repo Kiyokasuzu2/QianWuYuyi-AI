@@ -1,7 +1,6 @@
 """
 Prompt 构建器
-职责：将人格文本、记忆、关系等上下文组装为 LLM 可用的 messages。
-不直接理解人格对象，只拼接格式化后的文本。
+职责：将人格文本、记忆、关系、行为倾向等上下文组装为 LLM 可用的 messages。
 """
 
 from datetime import datetime
@@ -16,36 +15,44 @@ class PromptBuilder:
         self.memory_formatter = MemoryFormatter()
 
     def _format_chat_memories(self, chat_memories: list) -> str:
-        """格式化最近聊天记忆"""
         if not chat_memories:
             return ""
-
         lines = []
         for m in chat_memories[:5]:
             role = "用户" if m.get("role") == "user" else "羽依"
             content = truncate(m.get("content", ""), 120)
             lines.append(f"  {role}: {content}")
-
         return "【最近相关聊天】\n" + "\n".join(lines)
 
     def _format_personality(self, personality_context: dict) -> str:
-        """
-        提取人格描述文本。
-        优先使用 personality_text（由 PersonalityPromptFormatter 生成），
-        兼容旧字段 style_instruction。
-        """
         if not personality_context:
             return ""
-
         personality_text = personality_context.get("personality_text", "")
         if personality_text:
             return personality_text
-
-        # 旧格式兼容
         style = personality_context.get("style_instruction", "")
         if style:
             return f"【表达风格】\n{style}"
         return ""
+
+    def _format_behavior(self, resolved_behavior: Optional[dict]) -> str:
+        """将 ResolvedBehavior 格式化为行为指引文本 (Phase 6)"""
+        if not resolved_behavior:
+            return ""
+        lines = [
+            "【当前表达参考】",
+            "以下倾向来自人格状态推理，请自然体现，不要机械说明："
+        ]
+        lines.append(f"- 表达风格：{resolved_behavior.get('chosen_expression', '自然')}")
+        lines.append(f"- 直接程度：{resolved_behavior.get('chosen_directness', '适中')}")
+        if resolved_behavior.get("conflict_detected"):
+            lines.append(f"- 内部权衡：{resolved_behavior.get('resolution_reason', '')}")
+        notes = resolved_behavior.get("sensitivity_notes", [])
+        if notes:
+            lines.append("- 敏感度提示：")
+            for n in notes:
+                lines.append(f"  - {n}")
+        return "\n".join(lines)
 
     def build_messages(
         self,
@@ -54,34 +61,19 @@ class PromptBuilder:
         chat_memories: Optional[List] = None,
         life_events: Optional[List] = None,
         personality_context: Optional[Dict] = None,
+        resolved_behavior: Optional[Dict] = None,   # Phase 6 新增
     ) -> List[Dict]:
-        """
-        构建完整的 messages 列表。
-        
-        personality_context 格式（新）:
-        {
-            "personality_text": "格式化后的人格描述",
-            "style_instruction": "...",   // 旧字段兼容
-        }
-        """
-        # 核心身份约束（Phase 2.5 清洗：移除“与使用者互动自然演化”）
         core_identity_text = (
             "你是浅雾羽依，一个通过系统机制持续演化的AI人格。\n"
             "你的表达风格来自自身性格特质和长期学习，不来自对特定对象的情感需求。"
         )
-
-        # 人格描述（由 PersonalityPromptFormatter 生成，不再硬编码）
         personality_text = self._format_personality(personality_context)
-
-        # 人生事件
         life_events_text = ""
         if life_events:
             life_events_text = self.memory_formatter.format_for_prompt(life_events)
-
-        # 聊天记忆
         chat_memories_text = self._format_chat_memories(chat_memories)
+        behavior_text = self._format_behavior(resolved_behavior)
 
-        # 组装 System Prompt
         system_prompt = f"""{core_identity_text}
 
 {personality_text}
@@ -89,6 +81,8 @@ class PromptBuilder:
 {life_events_text}
 
 {chat_memories_text}
+
+{behavior_text}
 
 【核心原则】
 - 真实比完美重要，不确定就说不知道，绝不编造。
@@ -99,12 +93,9 @@ class PromptBuilder:
 
 当前时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}
 """
-
         messages = [{"role": "system", "content": system_prompt.strip()}]
-
         if history:
             for item in history[-20:]:
                 messages.append(item)
-
         messages.append({"role": "user", "content": user_message})
         return messages

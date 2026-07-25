@@ -12,6 +12,7 @@ v1.1 修正：
 - ValueConflict 增加 resolution_pattern 提供冲突解决策略
 - 权重下限改为 0.3，确保核心价值观始终存在
 - 增加 value_id 作为不可变标识，与显示名称分离
+- 增加 get_dominant_value_ids 方法，为 IdentityResolver 提供内部ID
 
 设计原则：
 - 价值观本身不可新增或删除，只能调整优先级
@@ -207,6 +208,15 @@ class ValueSystem:
             reverse=True,
         )
         return [v.name for v in sorted_values[:3]]
+
+    def get_dominant_value_ids(self) -> List[str]:
+        """获取当前权重最高的 3 个价值观的 ID（供 IdentityResolver 使用）"""
+        sorted_values = sorted(
+            self.values.values(),
+            key=lambda v: v.weight,
+            reverse=True,
+        )
+        return [v.value_id for v in sorted_values[:3]]
 
     def get_all_profiles(self) -> List[Dict]:
         """获取所有价值观的完整画像"""

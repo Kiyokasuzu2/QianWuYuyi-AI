@@ -8,6 +8,7 @@ v1.9 更新:
 - growth_history 改为构造注入，与 GrowthPipeline 共享同一实例
 - 接入 SelfModelStore，让自我认知进入人格输出
 - 保留 v1.8 的 Tension 检测和 EvolutionEngine 机制
+- 新增 get_trait_states() 公开方法，供 Phase 6 Orchestrator 调用
 """
 
 from typing import Dict, Optional, List
@@ -332,3 +333,10 @@ class PersonalityResolver:
         if score < 0.6: return "信任"
         if score < 0.8: return "深信"
         return "完全信任"
+
+    # ============================================================
+    # Phase 6 新增：公开访问 TraitState
+    # ============================================================
+    def get_trait_states(self) -> Dict[str, TraitState]:
+        """返回当前所有维度的 TraitState（供 Orchestrator 等外部模块调用）"""
+        return self._trait_states

@@ -1,33 +1,17 @@
 """
-成长流水线（GrowthPipeline）v0.6
+成长流水线（GrowthPipeline）v0.7
 
-浅雾羽依成长系统 v0.6
+浅雾羽依成长系统 v0.7
 
-流程:
-
-EventExtractor
-        ↓
-EventNormalizer
-        ↓
-EventValidator
-        ↓
-EventHistoryMatcher
-        ↓
-GrowthEvaluator  ← 新增
-        ↓
-GrowthEngine
-        ↓
-GrowthRecord  ← 新增
-        ↓
-RelationshipState
-        ↓
-PersonalityResolver
-
-职责:
-让羽依根据人生经历产生长期成长。
+Phase 7.1 更新：
+- 产生 PersonalityInfluence 影响记录
+- 提供 collect_new_influences 供 Orchestrator 同步
+- incremental_update 开头清理临时缓存
 """
 
 from typing import Optional
+import uuid
+from datetime import datetime
 
 from src.growth.event_extractor import EventExtractor
 from src.growth.event_normalizer import EventNormalizer
@@ -39,6 +23,10 @@ from src.growth.growth_evaluator import GrowthEvaluator
 
 from src.personality.personality_resolver import PersonalityResolver
 from src.personality.relationship_state import RelationshipState
+from src.personality.personality_growth_record import PersonalityGrowthHistory
+
+# Phase 7.1 新增
+from src.personality.personality_influence import PersonalityInfluence, InfluenceType
 
 
 class GrowthPipeline:
@@ -59,11 +47,14 @@ class GrowthPipeline:
         # 成长核心
         self.growth_engine = GrowthEngine()
 
-        # 成长评估器（Phase 3.1 新增）
+        # 成长评估器
         self.evaluator = GrowthEvaluator()
 
-        # 成长记录存储（Phase 3.1 新增）
-        self.growth_records = []
+        # 成长记录存储
+        self.growth_records = PersonalityGrowthHistory()
+
+        # Phase 7.1：临时影响记录缓存
+        self.new_influences = []
 
         # 关系系统
         self.relationship_state = (
@@ -81,18 +72,17 @@ class GrowthPipeline:
         self.event_memory = event_memory
         self.target_user_id = user_id
 
-        # ===== 将 GrowthState 注入 Matcher，使其能从持久化历史中识别重复经历 =====
         self.matcher.set_growth_state(self.growth_engine.state)
 
     # =================================================
     # 增量成长更新（实时聊天入口）
     # =================================================
     def incremental_update(self, user_message: str):
-        """
-        单次聊天后的快速成长入口
+        """单次聊天后的快速成长入口"""
 
-        用于 Orchestrator.process()
-        """
+        # Phase 7.1：每次调用清理临时缓存
+        self.new_influences.clear()
+
         try:
             events = self.extractor.extract_from_text(user_message)
 
@@ -126,7 +116,7 @@ class GrowthPipeline:
                 if not apply_flag:
                     continue
 
-                # ---- Phase 3.1：成长资格评估 ----
+                # 成长资格评估
                 canonical_topic = event.get("canonical_topic", event.get("topic", ""))
                 event_type = event.get("event_type", "")
                 history_events = self.matcher.get_history(canonical_topic, event_type)
@@ -136,10 +126,10 @@ class GrowthPipeline:
                 if evaluated.get("growth_allowed", False):
                     record = self.growth_engine.apply_evaluated(evaluated)
                     if record:
-                        self.growth_records.append(record)
+                        self.growth_records.add(record)
                         new_records.append(record)
 
-                # 原有 GrowthState 更新逻辑保留
+                # 原有 GrowthState 更新逻辑
                 result = self.growth_engine.apply(event)
 
                 if result.get("status") == "applied":
@@ -150,6 +140,34 @@ class GrowthPipeline:
                         **event,
                         "growth_mode": result.get("mode")
                     })
+
+                    # Phase 7.1：产生人格影响记录
+                    if result.get("delta"):
+                        for dim, delta in result["delta"].items():
+                            if abs(delta) > 0.001:
+                                confidence = self._calculate_influence_confidence(event, result)
+                                influence_type = result.get("change_type", InfluenceType.POSITIVE_GROWTH)
+                                if isinstance(influence_type, str):
+                                    try:
+                                        influence_type = InfluenceType(influence_type)
+                                    except ValueError:
+                                        influence_type = InfluenceType.POSITIVE_GROWTH
+
+                                influence = PersonalityInfluence(
+                                    influence_id=f"inf_{uuid.uuid4().hex[:8]}",
+                                    timestamp=datetime.now().isoformat(),
+                                    source_event_id=event.get("event_id", ""),
+                                    source_event_description=event.get("canonical_topic", ""),
+                                    affected_dimension=dim,
+                                    before_value=result.get("before", {}).get(dim, 0.5),
+                                    after_value=result.get("before", {}).get(dim, 0.5) + delta,
+                                    delta=delta,
+                                    influence_type=influence_type,
+                                    impact_weight=min(abs(delta), 1.0),
+                                    confidence=confidence,
+                                    evidence=event.get("source_ids", []),
+                                )
+                                self.new_influences.append(influence)
 
                 if self.store and event.get("source_ids"):
                     try:
@@ -172,6 +190,34 @@ class GrowthPipeline:
                 "personality": self.resolver.resolve(),
                 "growth_records": [],
             }
+
+    # =================================================
+    # Phase 7.1：收集本轮新产生的影响记录
+    # =================================================
+    def collect_new_influences(self):
+        """收集本轮新产生的影响记录，供 Orchestrator 同步到 RelationshipProfile"""
+        result = self.new_influences[:]
+        self.new_influences.clear()
+        return result
+
+    # =================================================
+    # Phase 7.1：计算影响记录的可信度
+    # =================================================
+    def _calculate_influence_confidence(self, event, result) -> float:
+        """基于证据链计算影响记录的可信度"""
+        confidence = 0.5
+        if event.get("validation_status") == "confirmed":
+            confidence += 0.3
+        if len(event.get("source_ids", [])) > 1:
+            confidence += 0.1
+        if result.get("status") == "applied":
+            confidence += 0.1
+        deltas = result.get("delta", {}).values()
+        if deltas:
+            max_delta = max(abs(v) for v in deltas)
+            if max_delta > 0.05:
+                confidence += 0.05
+        return min(confidence, 1.0)
 
     # =================================================
     # 关系更新（内部方法）
@@ -277,7 +323,6 @@ class GrowthPipeline:
                     print(f"⏭️ 跳过 event {event.get('event_id', '')} (validator_apply=False)")
                     continue
 
-                # ---- Phase 3.1：成长评估 ----
                 canonical_topic = event.get("canonical_topic", event.get("topic", ""))
                 event_type = event.get("event_type", "")
                 history_events = self.matcher.get_history(canonical_topic, event_type)
@@ -286,7 +331,7 @@ class GrowthPipeline:
                 if evaluated.get("growth_allowed", False):
                     record = self.growth_engine.apply_evaluated(evaluated)
                     if record:
-                        self.growth_records.append(record)
+                        self.growth_records.add(record)
                         new_records.append(record)
 
                 result = self.growth_engine.apply(event)
@@ -295,6 +340,34 @@ class GrowthPipeline:
                     applied += 1
                     processed.extend(event.get("source_ids", []))
                     self._update_relationship(event)
+
+                    # 产生人格影响记录
+                    if result.get("delta"):
+                        for dim, delta in result["delta"].items():
+                            if abs(delta) > 0.001:
+                                confidence = self._calculate_influence_confidence(event, result)
+                                influence_type = result.get("change_type", InfluenceType.POSITIVE_GROWTH)
+                                if isinstance(influence_type, str):
+                                    try:
+                                        influence_type = InfluenceType(influence_type)
+                                    except ValueError:
+                                        influence_type = InfluenceType.POSITIVE_GROWTH
+
+                                influence = PersonalityInfluence(
+                                    influence_id=f"inf_{uuid.uuid4().hex[:8]}",
+                                    timestamp=datetime.now().isoformat(),
+                                    source_event_id=event.get("event_id", ""),
+                                    source_event_description=event.get("canonical_topic", ""),
+                                    affected_dimension=dim,
+                                    before_value=result.get("before", {}).get(dim, 0.5),
+                                    after_value=result.get("before", {}).get(dim, 0.5) + delta,
+                                    delta=delta,
+                                    influence_type=influence_type,
+                                    impact_weight=min(abs(delta), 1.0),
+                                    confidence=confidence,
+                                    evidence=event.get("source_ids", []),
+                                )
+                                self.new_influences.append(influence)
 
             except Exception as e:
                 print(f"⚠️ 成长事件失败: {event.get('topic')}, {e}")

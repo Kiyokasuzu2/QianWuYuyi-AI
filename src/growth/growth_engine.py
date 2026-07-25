@@ -8,6 +8,7 @@ v1.7 更新:
 - 新增 apply_evaluated 方法，基于 GrowthEvaluator 的评估结果生成 GrowthRecord
 - 原有 apply 方法保留，用于 GrowthState 的历史统计和关系状态更新
 - GrowthRecord 由 PersonalityResolver 在 Phase 3.2 消费，Engine 不直接修改人格维度
+- Phase 7.1：apply 方法末尾调用 self.state.save() 确保成长状态持久化
 """
 
 from typing import Dict, Optional
@@ -126,6 +127,7 @@ class GrowthEngine:
     def apply(self, event: Dict):
         """
         原有方法：更新 GrowthState 统计指标（保留用于历史统计和关系状态）
+        Phase 7.1：末尾调用 self.state.save() 确保成长状态持久化
         """
         if event.get("event_scope") == "system":
             return {"status": "ignored", "reason": "system_event"}
@@ -164,14 +166,15 @@ class GrowthEngine:
             self.state.add_milestone(event.get("event_id"), event.get("topic", ""))
 
         self._record_history(event, mode, before, delta)
-        self.state.save()
+        self.state.save()  # Phase 7.1: 确保成长状态持久化
 
         return {
             "status": "applied",
             "mode": mode,
             "meaning": meaning,
             "topic": event.get("topic"),
-            "delta": delta
+            "delta": delta,
+            "before": before,
         }
 
     def apply_evaluated(self, evaluated_event: Dict) -> Optional[GrowthRecord]:

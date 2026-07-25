@@ -64,7 +64,6 @@ def test_structured_signals_have_ids():
 
 def test_version_check_raises():
     engine = BehaviorEngine()
-    # 创建一个版本不匹配的假快照
     class FakeSnapshot:
         schema_version = "old_version"
         personality_signals = []

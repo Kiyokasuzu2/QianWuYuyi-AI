@@ -1,0 +1,8 @@
+﻿{
+  "name": "astrbot_plugin_yuyi",
+  "version": "1.0.0",
+  "author": "Kiyokasuzu",
+  "description": "浅雾羽依 AI 的 AstrBot 插件，用于在 QQ 中调用羽依进行对话",
+  "main": "main.py",
+  "dependencies": []
+}

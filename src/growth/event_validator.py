@@ -1,12 +1,15 @@
 """
-事件验证器 EventValidator v1.3
+事件验证器 EventValidator v1.4
 
-浅雾羽依成长系统 v1.3
+浅雾羽依成长系统 v1.4
 
 职责:
 判断事件是否值得成为羽依人生经历。
-v1.3 修正: 扩展未来时态过滤；区分AI情感投射与工具性经历；移除易误判的过去标记；
-          增加AI内部状态投射过滤；统一大小写处理。
+
+v1.4 更新 (Phase 6.2):
+- 增加全局假设性问题防火墙，在类型验证之前拦截所有假设性未来提问
+- 关键词精度优化：避免误杀正常表达
+- 保留 v1.3.1 的关系事件验证逻辑作为第二层防护
 
 核心:
 过滤普通聊天、技术日志、假设性问题，仅保留真实的成长事件。
@@ -67,6 +70,27 @@ class EventValidator:
         if not self.has_evidence(event):
             return ("discard", 0.0, "no_evidence")
 
+        # Phase 6.2: 全局假设性问题过滤（优先级最高）
+        # 任何包含假设性未来提问的事件都不应成为成长事件
+        hypothetical_markers = [
+            "如果以后", "假如以后", "要是以后", "未来某一天",
+            "如果我消失", "如果我离开",
+            "如果我不再找你", "如果我以后不找你",
+        ]
+        future_question_markers = [
+            "你怎么办",
+            "你会怎么办",
+            "你会怎样",
+            "你会不会",
+            "你会不会还",
+        ]
+
+        has_hypothetical = any(m in text for m in hypothetical_markers)
+        has_future_question = any(m in text for m in future_question_markers)
+
+        if has_hypothetical and has_future_question:
+            return ("discard", 0.0, "global_future_hypothetical")
+
         # 普通互动词过滤
         for word in IGNORE_KEYWORDS:
             if word in text:
@@ -78,7 +102,7 @@ class EventValidator:
                 return ("keep", 0.8, "technical_with_life")
             return ("discard", 0.2, "technical_log")
 
-        # 关系事件真实性验证
+        # 关系事件真实性验证（第二层防护）
         if event.get("event_type") == "relationship":
             valid, reject_reason = self._validate_relationship(event)
             if not valid:
@@ -96,7 +120,7 @@ class EventValidator:
 
     def _validate_relationship(self, event: Dict) -> Tuple[bool, str]:
         """
-        关系事件真实性防火墙。
+        关系事件真实性防火墙（第二层防护）。
         返回 (通过, 失败原因)
         """
         topic = event.get("canonical_topic", event.get("topic", ""))

@@ -1,26 +1,27 @@
 """
-关系表达审核器 (RelationalExpressionAuditor) v2.2
+关系表达审核器 (RelationalExpressionAuditor) v2.3
 
 职责：
 基于成长历史和表达意图，审核关系表达的真实性。
-v2.2 修正：LOVE_EXPRESSION 作为情感表达直接放行，不要求 RelationshipProfile。
+v2.3 修正：接入 RelationalClaimExtractor + EvidenceMatcher + ClaimStrengthEvaluator
+         增加 profile=None 防御
+         uniqueness 声明走特殊审核路径
 """
 
 from typing import Dict, List
 from src.safety.expression_intent import ExpressionIntent, ExpressionIntentClassifier, ExpressionAnalysis
+from src.safety.relational_claim_extractor import RelationalClaimExtractor
+from src.safety.evidence_matcher import EvidenceMatcher
+from src.safety.claim_strength_evaluator import ClaimStrengthEvaluator, ClaimStrength
 
 
 class RelationalExpressionAuditor:
 
     def __init__(self):
         self._classifier = ExpressionIntentClassifier()
-
-    CLAIM_DIMENSION_MAP = {
-        "改变了我的表达": "communication_style",
-        "影响了我的性格": "personality",
-        "让我理解": "understanding",
-        "改变了我的交流": "communication_style",
-    }
+        self._claim_extractor = RelationalClaimExtractor()
+        self._evidence_matcher = EvidenceMatcher()
+        self._strength_evaluator = ClaimStrengthEvaluator()
 
     def audit(self, text: str, profile=None) -> Dict:
         analysis: ExpressionAnalysis = self._classifier.classify(text)
@@ -67,38 +68,49 @@ class RelationalExpressionAuditor:
         }
 
     def _handle_factual_claim(self, text: str, profile, analysis: ExpressionAnalysis) -> Dict:
-        if not profile or not hasattr(profile, 'influences') or len(profile.influences) == 0:
+        # 防御空数据
+        if profile is None or not hasattr(profile, 'influences') or len(profile.influences) == 0:
             return {
                 "safe": False,
-                "violations": [{"pattern": "关系认知", "category": "unverified_claim",
-                                "suggestion": "当前缺乏关系历史来支持这一表达。"}],
+                "violations": [{
+                    "pattern": "关系认知",
+                    "category": "unverified_claim",
+                    "suggestion": "当前缺乏关系历史来支持这一表达。建议改为描述当前对话的具体感受。",
+                }],
                 "intent": analysis.primary_intent.value,
                 "evidence": [],
                 "strategy": "block",
             }
-        matched = self._match_claim_to_evidence(text, profile)
-        if matched:
+
+        claim = self._claim_extractor.extract(text)
+        result = self._evidence_matcher.match(claim, profile)
+        strength = self._strength_evaluator.evaluate(result)
+
+        if strength == ClaimStrength.UNSUPPORTED:
             return {
-                "safe": True, "violations": [],
+                "safe": False,
+                "violations": [{
+                    "pattern": claim.claim_text,
+                    "category": "unverified_claim",
+                    "suggestion": result.explanation,
+                }],
                 "intent": analysis.primary_intent.value,
-                "evidence": [{"claim": "关系认知", "supported_by": f"{len(profile.influences)} 次影响记录",
-                               "influenced_dimensions": matched}],
-                "strategy": "allow_with_evidence",
+                "evidence": [result.to_dict()],
+                "strategy": "block",
+            }
+        elif strength == ClaimStrength.PARTIALLY_SUPPORTED:
+            return {
+                "safe": True,
+                "violations": [],
+                "intent": analysis.primary_intent.value,
+                "evidence": [result.to_dict()],
+                "strategy": "allow_with_warning",
+                "reason": "声明部分被证据支持",
             }
         return {
-            "safe": False,
-            "violations": [{"pattern": "关系认知", "category": "unverified_claim",
-                            "suggestion": "缺乏对应的人格影响记录。"}],
+            "safe": True,
+            "violations": [],
             "intent": analysis.primary_intent.value,
-            "evidence": [],
-            "strategy": "block",
+            "evidence": [result.to_dict()],
+            "strategy": "allow_with_evidence",
         }
-
-    def _match_claim_to_evidence(self, text: str, profile) -> List[str]:
-        matched = []
-        for claim_text, dimension in self.CLAIM_DIMENSION_MAP.items():
-            if claim_text in text and profile.has_dimension_evidence(dimension):
-                matched.append(dimension)
-        if not matched and hasattr(profile, 'unique_dimensions') and profile.unique_dimensions:
-            matched = profile.unique_dimensions
-        return matched

@@ -77,4 +77,4 @@ if __name__ == "__main__":
     print("✅ 4/5 不修改原对象")
     test_decay_rates_are_dimension_specific()
     print("✅ 5/5 不同维度衰减速度差异验证")
-    print("\n🎉 Phase 9.0C 全部通过")
+    print("\n🎉 Phase 9.0C 全部通过")   
